@@ -216,7 +216,7 @@ install_xbps_pkgs \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf \
-    ufw geoclue2 ananicy-cpp snooze
+    ufw geoclue2 snooze fuse
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -243,8 +243,6 @@ if [ "${#GPU_VENDORS[@]}" -gt 1 ]; then
     log_info "Wykryto hybrydowy układ graficzny: ${GPU_VENDORS[*]}" "Detected a hybrid GPU setup: ${GPU_VENDORS[*]}"
 elif [ "${#GPU_VENDORS[@]}" -eq 1 ]; then
     log_info "Wykryto kartę graficzną: ${GPU_VENDORS[*]}" "Detected GPU: ${GPU_VENDORS[*]}"
-else
-    log_warn "Nie wykryto karty NVIDIA/AMD/Intel - zainstalowano tylko sterowniki Mesa" "No NVIDIA/AMD/Intel GPU detected - only Mesa drivers were installed"
 fi
 
 if [ "${#GPU_PKGS[@]}" -gt 0 ]; then
@@ -335,13 +333,16 @@ if command -v ufw &>/dev/null; then
     enable_service ufw
 fi
 
-enable_service ananicy-cpp
-
+sudo mkdir -p /etc/cron.weekly
 printf '#!/bin/sh\nfstrim -Av\n' | sudo tee /etc/cron.weekly/fstrim
 sudo chmod 755 /etc/cron.weekly/fstrim
 enable_service snooze-weekly
 
 echo "options btusb enable_autosuspend=0" | sudo tee /etc/modprobe.d/btusb.conf
+
+sudo mkdir -p /etc/modules-load.d
+echo "fuse" | sudo tee /etc/modules-load.d/fuse.conf
+sudo modprobe fuse || true
 
 enable_service libvirtd
 enable_service virtlogd
