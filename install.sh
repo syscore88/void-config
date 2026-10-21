@@ -217,7 +217,7 @@ install_xbps_pkgs \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
-    ufw geoclue2 snooze fuse
+    ufw geoclue2 snooze fuse octoxbps
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
