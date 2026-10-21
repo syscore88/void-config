@@ -72,12 +72,15 @@ show_progress() {
     local msg=$3
     local percent=$(( step * 100 / total ))
 
+    # Szerokość terminala czytana bezpośrednio z /dev/tty
+    # (stdout/stderr skryptu są przekierowane do pliku logu, więc tput by tu zawiódł)
     local cols
-    cols=$(tput cols 2>/dev/null || true)
-    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+    cols=$(stty size </dev/tty 2>/dev/null || true)
+    cols="${cols##* }"
+    [[ "$cols" =~ ^[0-9]+$ ]] && (( cols > 0 )) || cols=80
 
     local bar_width=50
-    local reserved=12
+    local reserved=14
     if (( cols - reserved < bar_width )); then
         bar_width=$(( cols - reserved ))
         (( bar_width < 10 )) && bar_width=10
@@ -215,7 +218,7 @@ install_xbps_pkgs \
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
-    virt-manager libvirt qemu dnsmasq edk2-ovmf dconf \
+    virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
     ufw geoclue2 snooze fuse
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
@@ -467,7 +470,7 @@ fi
 #  ETAP 4/4: CZYSZCZENIE
 # =============================================================
 show_progress 9 $TOTAL_STEPS "$MSG_PHASE_4"
-echo -e "\n" >&3
+printf '\n\n' >&3
 
 if [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
     log_warn "Nie udało się zainstalować: ${FAILED_PACKAGES[*]}" "Failed to install: ${FAILED_PACKAGES[*]}"
