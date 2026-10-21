@@ -1,6 +1,6 @@
 #!/bin/bash
 # =====================================
-#  SKRYPT INSTALACYJNY - Void Linux
+#  SKRYPT KONFIGURACYJNY - Void Linux
 # =====================================
 
 set -Eeuo pipefail
