@@ -234,7 +234,7 @@ install_xbps_pkgs \
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 gstreamer1-32bit \
     wine gamemode libgamemode-32bit gamescope gamescope-32bit MangoHud MangoHud-32bit timeshift os-prober \
     ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit \
-    android-tools inxi zenity cdemu-client cdemu-daemon
+    android-tools inxi zenity cdemu-client cdemu-daemon plymouth
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -456,13 +456,18 @@ for vendor in "${GPU_VENDORS[@]}"; do
         intel)  DRACUT_DRIVERS+=" i915" ;;
     esac
 done
+sudo mkdir -p /etc/dracut.conf.d
 if [ -n "$DRACUT_DRIVERS" ]; then
-    sudo mkdir -p /etc/dracut.conf.d
     echo "add_drivers+=\"$DRACUT_DRIVERS \"" | sudo tee /etc/dracut.conf.d/gpu.conf > /dev/null
-    sudo dracut --regenerate-all --force || true
 fi
+echo 'add_dracutmodules+=" plymouth "' | sudo tee /etc/dracut.conf.d/plymouth.conf > /dev/null
+sudo plymouth-set-default-theme bgrt || true
+sudo dracut --regenerate-all --force || true
 
-CMDLINE="quiet loglevel=3 rd.udev.log_level=3 mitigations=off split_lock_detect=off"
+sudo mkdir -p /etc/sysctl.d
+echo "kernel.printk = 0 0 0 0" | sudo tee /etc/sysctl.d/20-quiet-printk.conf > /dev/null
+
+CMDLINE="quiet splash loglevel=0 rd.udev.log_level=0 udev.log_level=0 vt.global_cursor_default=0 mitigations=off split_lock_detect=off"
 if [[ "$GPU_TYPE" == *nvidia* ]]; then
     CMDLINE="$CMDLINE nvidia_drm.modeset=1"
 fi
@@ -472,13 +477,16 @@ else
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"" | sudo tee -a /etc/default/grub
 fi
 
-for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden"; do
+for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden" "GRUB_GFXPAYLOAD_LINUX=keep"; do
     key="${kv%%=*}"
     if grep -qE "^#?${key}=" /etc/default/grub; then
         sudo sed -i -E "s|^#?${key}=.*|${kv}|" /etc/default/grub
     else
         echo "$kv" | sudo tee -a /etc/default/grub
     fi
+done
+for f in /etc/grub.d/10_linux /etc/grub.d/20_linux_xen; do
+    [ -f "$f" ] && sudo sed -i '/echo.*\$message.*grub_quote/d' "$f" || true
 done
 sudo grub-mkconfig -o /boot/grub/grub.cfg
 
