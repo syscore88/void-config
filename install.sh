@@ -346,18 +346,6 @@ enable_service acpid
 
 show_progress 7 $TOTAL_STEPS "$MSG_PHASE_3"
 
-if [ -f /etc/default/ufw ]; then
-    sudo sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
-fi
-
-if command -v ufw &>/dev/null; then
-    sudo ufw allow ssh || true
-    sudo ufw allow in  on virbr0 || true
-    sudo ufw allow out on virbr0 || true
-    sudo ufw --force enable || true
-    enable_service ufw
-fi
-
 sudo mkdir -p /etc/cron.weekly
 printf '#!/bin/sh\nfstrim -Av >/dev/null 2>&1\n' | sudo tee /etc/cron.weekly/fstrim
 sudo chmod 755 /etc/cron.weekly/fstrim
@@ -378,13 +366,18 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
+LIBVIRT_NET="192.168.122.0/24"
+if ip -4 -o addr show 2>/dev/null | awk '$2 != "virbr0" && $4 ~ /^192\.168\.122\./ {found=1} END {exit !found}'; then
+    LIBVIRT_NET="192.168.150.0/24"
+fi
+
 LIBVIRT_NET_XML="$(mktemp)"
 if sudo virsh net-info default &>/dev/null; then
-    sudo virsh net-dumpxml default > "$LIBVIRT_NET_XML"
+    sudo virsh net-dumpxml default --inactive > "$LIBVIRT_NET_XML"
 else
     cp /usr/share/libvirt/networks/default.xml "$LIBVIRT_NET_XML"
 fi
-if ip -4 -o addr show | grep -v virbr0 | grep -q ' 192\.168\.122\.'; then
+if [[ "$LIBVIRT_NET" == "192.168.150.0/24" ]] && grep -q '192\.168\.122\.' "$LIBVIRT_NET_XML"; then
     sed -i 's/192\.168\.122\./192.168.150./g' "$LIBVIRT_NET_XML"
     sudo virsh net-destroy default 2>/dev/null || true
     sudo virsh net-undefine default 2>/dev/null || true
@@ -396,6 +389,21 @@ rm -f "$LIBVIRT_NET_XML"
 
 sudo virsh net-start default 2>/dev/null || true
 sudo virsh net-autostart default || true
+
+if command -v ufw &>/dev/null; then
+    [[ -f /etc/default/ufw ]] && sudo sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw || true
+    sudo ufw --force reset || true
+    sudo ufw default deny incoming || true
+    sudo ufw default allow outgoing || true
+    sudo ufw allow in  on virbr0 || true
+    sudo ufw allow out on virbr0 || true
+    sudo ufw allow from "$LIBVIRT_NET" || true
+    if pkg_installed openssh || [[ -x /usr/bin/sshd ]] || [[ -x /usr/sbin/sshd ]] || [[ -e /var/service/sshd ]]; then
+        sudo ufw allow ssh || true
+    fi
+    sudo ufw --force enable || true
+    enable_service ufw
+fi
 
 dbus-run-session -- dconf load /org/virt-manager/virt-manager/ <<'DCONF_EOF' || true
 [/]
