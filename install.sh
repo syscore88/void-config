@@ -378,9 +378,21 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
-if ! sudo virsh net-info default &>/dev/null; then
-    sudo virsh net-define /usr/share/libvirt/networks/default.xml || true
+LIBVIRT_NET_XML="$(mktemp)"
+if sudo virsh net-info default &>/dev/null; then
+    sudo virsh net-dumpxml default > "$LIBVIRT_NET_XML"
+else
+    cp /usr/share/libvirt/networks/default.xml "$LIBVIRT_NET_XML"
 fi
+if ip -4 -o addr show | grep -v virbr0 | grep -q ' 192\.168\.122\.'; then
+    sed -i 's/192\.168\.122\./192.168.150./g' "$LIBVIRT_NET_XML"
+    sudo virsh net-destroy default 2>/dev/null || true
+    sudo virsh net-undefine default 2>/dev/null || true
+fi
+if ! sudo virsh net-info default &>/dev/null; then
+    sudo virsh net-define "$LIBVIRT_NET_XML" || true
+fi
+rm -f "$LIBVIRT_NET_XML"
 
 sudo virsh net-start default 2>/dev/null || true
 sudo virsh net-autostart default || true
