@@ -224,17 +224,17 @@ sudo xbps-install -Syu
 show_progress 2 $TOTAL_STEPS "$MSG_PHASE_2"
 
 install_xbps_pkgs \
-    pciutils mesa-dri vulkan-loader libgcc-32bit mesa-dri-32bit vulkan-loader-32bit \
-    elogind dbus polkit sudo chrony acpid NetworkManager \
+    pciutils mesa-dri vulkan-loader libgcc-32bit vulkan-loader-32bit \
+    elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager \
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pavucontrol \
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
-    ufw geoclue2 snooze fuse octoxbps \
-    wine gamemode gamescope MangoHud timeshift os-prober \
-    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip \
-    android-tools inxi zenity
+    ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 gstreamer1-32bit \
+    wine gamemode libgamemode-32bit gamescope gamescope-32bit MangoHud MangoHud-32bit timeshift os-prober \
+    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit \
+    android-tools inxi zenity cdemu-client cdemu-daemon
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -268,8 +268,8 @@ fi
 for vendor in "${GPU_VENDORS[@]}"; do
     case "$vendor" in
         nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit) ;;
-        amd)    GPU_PKGS+=(mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi) ;;
-        intel)  GPU_PKGS+=(mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver libva-intel-driver) ;;
+        amd)    GPU_PKGS+=(mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-32bit) ;;
+        intel)  GPU_PKGS+=(mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver libva-intel-driver mesa-32bit) ;;
     esac
 done
 
