@@ -160,6 +160,20 @@ pkg_installed() {
     xbps-query "$1" &>/dev/null
 }
 
+retry_cmd() {
+    local attempts="$1"; shift
+    local delay=3
+    local n=1
+    until "$@"; do
+        if (( n >= attempts )); then
+            return 1
+        fi
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+        n=$(( n + 1 ))
+    done
+}
+
 install_xbps_pkgs() {
     local valid_pkgs=()
     local pkg
@@ -172,14 +186,14 @@ install_xbps_pkgs() {
         fi
     done
     for pkg in "${valid_pkgs[@]}"; do
-        sudo xbps-install -y "$pkg" || FAILED_PACKAGES+=("$pkg")
+        retry_cmd 3 sudo xbps-install -y "$pkg" || FAILED_PACKAGES+=("$pkg")
     done
 }
 
 install_flatpak_apps() {
     local app
     for app in "$@"; do
-        sudo flatpak install -y --noninteractive flathub "$app" || FAILED_PACKAGES+=("$app")
+        retry_cmd 3 sudo flatpak install -y --noninteractive flathub "$app" || FAILED_PACKAGES+=("$app")
     done
 }
 
@@ -217,10 +231,15 @@ install_xbps_pkgs \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
-    ufw geoclue2 snooze fuse octoxbps
+    ufw geoclue2 snooze fuse octoxbps \
+    wine gamemode gamescope MangoHud timeshift os-prober \
+    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip \
+    android-tools inxi zenity
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
+GPU_TYPE="unknown"
+HYBRID_GPU=false
 GPU_VENDORS=()
 GPU_PKGS=()
 if command -v lspci &>/dev/null; then
@@ -228,23 +247,31 @@ if command -v lspci &>/dev/null; then
 
     if echo "$GPU_INFO" | grep -qi 'nvidia'; then
         GPU_VENDORS+=("nvidia")
-        GPU_PKGS+=(nvidia nvidia-libs-32bit)
     fi
-    if echo "$GPU_INFO" | grep -Eqi 'amd|advanced micro|\bati\b|radeon'; then
+    if echo "$GPU_INFO" | grep -Eqi '\b(amd|ati)\b|advanced micro devices|radeon'; then
         GPU_VENDORS+=("amd")
-        GPU_PKGS+=(mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vdpau)
     fi
     if echo "$GPU_INFO" | grep -qi 'intel'; then
         GPU_VENDORS+=("intel")
-        GPU_PKGS+=(mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver)
     fi
 fi
 
-if [ "${#GPU_VENDORS[@]}" -gt 1 ]; then
-    log_info "Wykryto hybrydowy układ graficzny: ${GPU_VENDORS[*]}" "Detected a hybrid GPU setup: ${GPU_VENDORS[*]}"
+if [ "${#GPU_VENDORS[@]}" -ge 2 ]; then
+    HYBRID_GPU=true
+    GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
+    log_info "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE" "Detected a hybrid GPU setup (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
 elif [ "${#GPU_VENDORS[@]}" -eq 1 ]; then
-    log_info "Wykryto kartę graficzną: ${GPU_VENDORS[*]}" "Detected GPU: ${GPU_VENDORS[*]}"
+    GPU_TYPE="${GPU_VENDORS[0]}"
+    log_info "Wykryto kartę graficzną: $GPU_TYPE" "Detected GPU: $GPU_TYPE"
 fi
+
+for vendor in "${GPU_VENDORS[@]}"; do
+    case "$vendor" in
+        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit) ;;
+        amd)    GPU_PKGS+=(mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi) ;;
+        intel)  GPU_PKGS+=(mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver libva-intel-driver) ;;
+    esac
+done
 
 if [ "${#GPU_PKGS[@]}" -gt 0 ]; then
     install_xbps_pkgs "${GPU_PKGS[@]}"
@@ -252,7 +279,7 @@ fi
 
 show_progress 4 $TOTAL_STEPS "$MSG_PHASE_2"
 
-sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+retry_cmd 3 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 sudo flatpak config --system --set extra-languages pl
 
 install_flatpak_apps \
@@ -269,8 +296,8 @@ install_flatpak_apps \
     org.libreoffice.LibreOffice \
     org.kde.krita \
     org.gimp.GIMP \
-    org.gimp.GIMP.Plugin.GMic \
     com.brave.Browser \
+    com.google.Chrome \
     com.github.tchx84.Flatseal \
     it.mijorus.gearlever \
     io.github.Faugus.faugus-launcher \
@@ -311,11 +338,8 @@ sudo ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf /etc/alsa/conf.
 
 show_progress 6 $TOTAL_STEPS "$MSG_PHASE_3"
 
-sudo rm -f /var/service/dhcpcd /var/service/wpa_supplicant
-
 enable_service dbus
 enable_service elogind
-enable_service NetworkManager
 enable_service bluetoothd
 enable_service chronyd
 enable_service acpid
@@ -335,7 +359,7 @@ if command -v ufw &>/dev/null; then
 fi
 
 sudo mkdir -p /etc/cron.weekly
-printf '#!/bin/sh\nfstrim -Av\n' | sudo tee /etc/cron.weekly/fstrim
+printf '#!/bin/sh\nfstrim -Av >/dev/null 2>&1\n' | sudo tee /etc/cron.weekly/fstrim
 sudo chmod 755 /etc/cron.weekly/fstrim
 enable_service snooze-weekly
 
@@ -404,18 +428,55 @@ for grp in libvirt kvm; do
     getent group "$grp" &>/dev/null && sudo usermod -aG "$grp" "$CURRENT_USER" || true
 done
 
+DRACUT_DRIVERS=""
+for vendor in "${GPU_VENDORS[@]}"; do
+    case "$vendor" in
+        nvidia) DRACUT_DRIVERS+=" nvidia nvidia_modeset nvidia_uvm nvidia_drm" ;;
+        amd)    DRACUT_DRIVERS+=" amdgpu" ;;
+        intel)  DRACUT_DRIVERS+=" i915" ;;
+    esac
+done
+if [ -n "$DRACUT_DRIVERS" ]; then
+    sudo mkdir -p /etc/dracut.conf.d
+    echo "add_drivers+=\"$DRACUT_DRIVERS \"" | sudo tee /etc/dracut.conf.d/gpu.conf > /dev/null
+    sudo dracut --regenerate-all --force || true
+fi
+
+CMDLINE="quiet loglevel=3 rd.udev.log_level=3 mitigations=off split_lock_detect=off"
+if [[ "$GPU_TYPE" == *nvidia* ]]; then
+    CMDLINE="$CMDLINE nvidia_drm.modeset=1"
+fi
+if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+    sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"|" /etc/default/grub
+else
+    echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"" | sudo tee -a /etc/default/grub
+fi
+
+for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden"; do
+    key="${kv%%=*}"
+    if grep -qE "^#?${key}=" /etc/default/grub; then
+        sudo sed -i -E "s|^#?${key}=.*|${kv}|" /etc/default/grub
+    else
+        echo "$kv" | sudo tee -a /etc/default/grub
+    fi
+done
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+
 show_progress 8 $TOTAL_STEPS "$MSG_PHASE_3"
 
 if command -v zsh &>/dev/null; then
     sudo chsh -s /usr/bin/zsh "$CURRENT_USER" || true
 
-    [ ! -d "$HOME/.oh-my-zsh" ] && \
-        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" \
-        "" --unattended || true
+    if [ ! -d "$HOME/.oh-my-zsh" ]; then
+        OMZ_INSTALLER="$(mktemp)"
+        retry_cmd 3 curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o "$OMZ_INSTALLER" \
+            && sh "$OMZ_INSTALLER" --unattended || true
+        rm -f "$OMZ_INSTALLER"
+    fi
 
     P10K_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
     [ ! -d "$P10K_DIR" ] && \
-        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" || true
+        retry_cmd 3 git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" || true
 
     if [ -f ~/.zshrc ]; then
         sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' ~/.zshrc
@@ -463,6 +524,34 @@ if [ -d "$SCRIPT_DIR/.config" ]; then
     mkdir -p ~/.config
     cp -afT "$SCRIPT_DIR/.config" ~/.config
 fi
+
+if pkg_installed plasma-desktop || pkg_installed plasma-workspace; then
+    mkdir -p ~/.config
+    cat > ~/.config/kwalletrc << 'KWALLET_EOF'
+[Wallet]
+Close When Idle=false
+Close on Screensaver=false
+Default Wallet=kdewallet
+Enabled=false
+First Use=false
+Idle Timeout=10
+Launch Manager=false
+Leave Manager Open=false
+Leave Open=true
+Prompt on Open=false
+Use One Wallet=true
+
+[org.freedesktop.secrets]
+apiEnabled=false
+KWALLET_EOF
+fi
+
+sudo mkdir -p /etc/NetworkManager/conf.d
+echo -e "[main]\ndns=default\nrc-manager=symlink" | sudo tee /etc/NetworkManager/conf.d/dns.conf > /dev/null
+echo -e "[global-dns]\n\n[global-dns-domain-*]\nservers=1.1.1.2,1.0.0.2,2606:4700:4700::1112,2606:4700:4700::1002" | sudo tee /etc/NetworkManager/conf.d/global-dns.conf > /dev/null
+
+sudo rm -f /var/service/dhcpcd /var/service/wpa_supplicant
+enable_service NetworkManager
 
 # =============================================================
 #  ETAP 4/4: CZYSZCZENIE
