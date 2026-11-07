@@ -234,7 +234,7 @@ install_xbps_pkgs \
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 gstreamer1-32bit \
     wine gamemode libgamemode-32bit gamescope gamescope-32bit MangoHud MangoHud-32bit timeshift os-prober \
     ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit \
-    android-tools inxi zenity cdemu-client cdemu-daemon plymouth
+    android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -321,7 +321,7 @@ done
 show_progress 5 $TOTAL_STEPS "$MSG_PHASE_3"
 
 TO_REMOVE=(
-    gnome-software cosmic-store discover
+    gnome-software cosmic-store discover parole
 )
 for pkg in "${TO_REMOVE[@]}"; do
     if pkg_installed "$pkg"; then
@@ -343,6 +343,13 @@ enable_service elogind
 enable_service bluetoothd
 enable_service chronyd
 enable_service acpid
+
+if [ -d /etc/sv/zramen ]; then
+    printf "export ZRAM_COMP_ALGORITHM='zstd'\nexport ZRAM_SIZE=50\nexport ZRAM_PRIORITY=32767\n" | sudo tee /etc/sv/zramen/conf > /dev/null
+    sudo mkdir -p /etc/sysctl.d
+    printf "vm.swappiness=180\nvm.page-cluster=0\n" | sudo tee /etc/sysctl.d/99-zram.conf > /dev/null
+    sudo ln -sf /etc/sv/zramen /var/service/
+fi
 
 show_progress 7 $TOTAL_STEPS "$MSG_PHASE_3"
 
