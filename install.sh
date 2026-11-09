@@ -205,6 +205,10 @@ enable_service() {
     fi
 }
 
+dconf_load() {
+    dbus-run-session -- dconf load "$1" || true
+}
+
 # =============================================================
 #  ETAP 1/4: PRZYGOTOWYWANIE
 # =============================================================
@@ -412,7 +416,7 @@ if command -v ufw &>/dev/null; then
     enable_service ufw
 fi
 
-dbus-run-session -- dconf load /org/virt-manager/virt-manager/ <<'DCONF_EOF' || true
+dconf_load /org/virt-manager/virt-manager/ <<'DCONF_EOF'
 [/]
 manager-window-height=297
 manager-window-width=478
