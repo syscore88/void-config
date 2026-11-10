@@ -228,18 +228,28 @@ sudo xbps-install -Syu
 show_progress 2 $TOTAL_STEPS "$MSG_PHASE_2"
 
 install_xbps_pkgs \
-    pciutils mesa-dri vulkan-loader libgcc-32bit vulkan-loader-32bit \
+    pciutils \
     elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager \
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pavucontrol \
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji \
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
-    ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 gstreamer1-32bit \
-    wine gamemode libgamemode-32bit gamescope gamescope-32bit MangoHud MangoHud-32bit timeshift os-prober \
-    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit \
-    android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen \
+    ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 \
+    wine gamemode gamescope MangoHud timeshift os-prober \
+    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip \
+    android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen
+
+PKGS_32BIT=(
+    libgcc-32bit gstreamer1-32bit libgamemode-32bit gamescope-32bit MangoHud-32bit
+    alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit
+)
+install_xbps_pkgs "${PKGS_32BIT[@]}"
+
+PKGS_CODECS=(
     ffmpeg x264 gst-libav gst-plugins-good1 gst-plugins-bad1 gst-plugins-ugly1
+)
+install_xbps_pkgs "${PKGS_CODECS[@]}"
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -272,17 +282,18 @@ fi
 
 for vendor in "${GPU_VENDORS[@]}"; do
     case "$vendor" in
-        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl nvidia-opencl-32bit) ;;
-        amd)    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit) ;;
-        intel)  GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver) ;;
+        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl mesa-dri vulkan-loader vulkan-loader-32bit) ;;
+        amd)    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
+        intel)  GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
     esac
 done
 
 if [ "${#GPU_VENDORS[@]}" -eq 0 ]; then
-    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit)
+    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl)
 fi
 
 if [ "${#GPU_PKGS[@]}" -gt 0 ]; then
+    mapfile -t GPU_PKGS < <(printf '%s\n' "${GPU_PKGS[@]}" | awk '!seen[$0]++')
     install_xbps_pkgs "${GPU_PKGS[@]}"
 fi
 
@@ -323,6 +334,19 @@ for appid in "${LSFG_APPS[@]}"; do
     flatpak override --user --filesystem="$HOME/.local/share/Steam/steamapps/common:ro" "$appid" || true
     flatpak override --user --env=LSFGVK_CONFIG="$HOME/.config/lsfg-vk/conf.toml" "$appid" || true
 done
+
+mkdir -p "$HOME/.config/autostart"
+for f in /etc/xdg/autostart/gcdemu.desktop /etc/xdg/autostart/cdemu.desktop /usr/share/applications/gcdemu.desktop; do
+    if [[ -f "$f" ]]; then
+        cp -f "$f" "$HOME/.config/autostart/$(basename "$f")"
+        if grep -q '^Hidden=' "$HOME/.config/autostart/$(basename "$f")"; then
+            sed -i 's/^Hidden=.*/Hidden=true/' "$HOME/.config/autostart/$(basename "$f")"
+        else
+            echo "Hidden=true" >> "$HOME/.config/autostart/$(basename "$f")"
+        fi
+    fi
+done
+pkill -f gcdemu 2>/dev/null || true
 
 # =============================================================
 #  ETAP 3/4: OPTYMALIZACJA
