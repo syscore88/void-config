@@ -222,82 +222,88 @@ sudo xbps-install -Syu xbps
 sudo xbps-install -Sy void-repo-nonfree void-repo-multilib void-repo-multilib-nonfree
 sudo xbps-install -Syu
 
+install_xbps_pkgs pciutils
+
+GPU_TYPE="unknown"
+HYBRID_GPU=false
+GPU_VENDORS=()
+GPU_UNKNOWN_PKGS=(
+    mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit
+    mesa-vaapi mesa-vaapi-32bit mesa-opencl
+)
+if command -v lspci &>/dev/null; then
+    GPU_INFO=$(lspci | grep -i -E "vga|3d|display" || true)
+
+    echo "$GPU_INFO" | grep -qi "nvidia"      && GPU_VENDORS+=("nvidia")
+    echo "$GPU_INFO" | grep -qi -E "\b(amd|ati)\b|advanced micro devices|radeon" && GPU_VENDORS+=("amd")
+    echo "$GPU_INFO" | grep -qi "intel"       && GPU_VENDORS+=("intel")
+
+    TOTAL_KNOWN=${#GPU_VENDORS[@]}
+
+    if [ -z "$GPU_INFO" ] || [ "$TOTAL_KNOWN" -eq 0 ]; then
+        HYBRID_GPU=false
+        for pkg in "${GPU_UNKNOWN_PKGS[@]}"; do
+            pkg_installed "$pkg" || retry_cmd 3 sudo xbps-install -y "$pkg" || true
+        done
+    elif [ "$TOTAL_KNOWN" -ge 2 ]; then
+        HYBRID_GPU=true
+        GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
+        log_info "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE" "Detected a hybrid GPU setup (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
+    else
+        HYBRID_GPU=false
+        GPU_TYPE="${GPU_VENDORS[0]}"
+    fi
+else
+    for pkg in "${GPU_UNKNOWN_PKGS[@]}"; do
+        pkg_installed "$pkg" || retry_cmd 3 sudo xbps-install -y "$pkg" || true
+    done
+fi
+
 # =============================================================
 #  ETAP 2/4: INSTALACJA
 # =============================================================
 show_progress 2 $TOTAL_STEPS "$MSG_PHASE_2"
 
-install_xbps_pkgs \
-    pciutils \
-    elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager \
-    bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pavucontrol \
-    dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji \
-    curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak \
-    zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch \
-    virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim \
-    ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 \
-    wine gamemode gamescope MangoHud timeshift os-prober \
-    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip \
+SYSTEM_PKGS=(
+    elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager
+    bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pavucontrol
+    dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
+    curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak
+    zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
+    virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim
+    ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1
+    wine gamemode gamescope MangoHud timeshift os-prober
+    ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip
     android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen
+)
 
 PKGS_32BIT=(
-    libgcc-32bit gstreamer1-32bit libgamemode-32bit gamescope-32bit MangoHud-32bit
+    libgcc-32bit gstreamer1-32bit libgamemode-32bit MangoHud-32bit
     alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit
+    pipewire-32bit libXrender-32bit
 )
-install_xbps_pkgs "${PKGS_32BIT[@]}"
 
 PKGS_CODECS=(
     ffmpeg x264 gst-libav gst-plugins-good1 gst-plugins-bad1 gst-plugins-ugly1
 )
-install_xbps_pkgs "${PKGS_CODECS[@]}"
-
-show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
-
-GPU_TYPE="unknown"
-HYBRID_GPU=false
-GPU_VENDORS=()
-GPU_PKGS=()
-if command -v lspci &>/dev/null; then
-    GPU_INFO=$(lspci | grep -Ei 'vga|3d|display' || true)
-
-    if echo "$GPU_INFO" | grep -qi 'nvidia'; then
-        GPU_VENDORS+=("nvidia")
-    fi
-    if echo "$GPU_INFO" | grep -Eqi '\b(amd|ati)\b|advanced micro devices|radeon'; then
-        GPU_VENDORS+=("amd")
-    fi
-    if echo "$GPU_INFO" | grep -qi 'intel'; then
-        GPU_VENDORS+=("intel")
-    fi
-fi
-
-if [ "${#GPU_VENDORS[@]}" -ge 2 ]; then
-    HYBRID_GPU=true
-    GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
-    log_info "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE" "Detected a hybrid GPU setup (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
-elif [ "${#GPU_VENDORS[@]}" -eq 1 ]; then
-    GPU_TYPE="${GPU_VENDORS[0]}"
-    log_info "Wykryto kartę graficzną: $GPU_TYPE" "Detected GPU: $GPU_TYPE"
-fi
 
 for vendor in "${GPU_VENDORS[@]}"; do
     case "$vendor" in
-        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl mesa-dri vulkan-loader vulkan-loader-32bit) ;;
-        amd)    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
-        intel)  GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
+        "nvidia") SYSTEM_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl mesa-dri vulkan-loader vulkan-loader-32bit) ;;
+        "amd")    SYSTEM_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
+        "intel")  SYSTEM_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
     esac
 done
 
-if [ "${#GPU_VENDORS[@]}" -eq 0 ]; then
-    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl)
+if [ "${#GPU_VENDORS[@]}" -gt 0 ]; then
+    readarray -t SYSTEM_PKGS < <(printf '%s\n' "${SYSTEM_PKGS[@]}" | awk '!seen[$0]++')
 fi
 
-if [ "${#GPU_PKGS[@]}" -gt 0 ]; then
-    mapfile -t GPU_PKGS < <(printf '%s\n' "${GPU_PKGS[@]}" | awk '!seen[$0]++')
-    install_xbps_pkgs "${GPU_PKGS[@]}"
-fi
+install_xbps_pkgs "${SYSTEM_PKGS[@]}"
+install_xbps_pkgs "${PKGS_32BIT[@]}"
+install_xbps_pkgs "${PKGS_CODECS[@]}"
 
-show_progress 4 $TOTAL_STEPS "$MSG_PHASE_2"
+show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
 retry_cmd 3 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 sudo flatpak config --system --set extra-languages pl
@@ -326,6 +332,8 @@ install_flatpak_apps \
     ai.opencode.opencode \
     org.freedesktop.Platform.VulkanLayer.lsfgvk//24.08 \
     org.freedesktop.Platform.VulkanLayer.lsfgvk//25.08
+
+show_progress 4 $TOTAL_STEPS "$MSG_PHASE_2"
 
 LSFG_APPS=(io.github.Faugus.faugus-launcher)
 mkdir -p "$HOME/.config/lsfg-vk"
