@@ -238,7 +238,8 @@ install_xbps_pkgs \
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1 gstreamer1-32bit \
     wine gamemode libgamemode-32bit gamescope gamescope-32bit MangoHud MangoHud-32bit timeshift os-prober \
     ntfs-3g btrfs-progs fwupd rsync mc unrar 7zip alsa-plugins-32bit libXrandr-32bit alsa-pipewire-32bit libpulseaudio-32bit \
-    android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen
+    android-tools inxi zenity cdemu-client cdemu-daemon plymouth zramen \
+    ffmpeg x264 gst-libav gst-plugins-good1 gst-plugins-bad1 gst-plugins-ugly1
 
 show_progress 3 $TOTAL_STEPS "$MSG_PHASE_2"
 
