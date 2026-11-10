@@ -272,11 +272,15 @@ fi
 
 for vendor in "${GPU_VENDORS[@]}"; do
     case "$vendor" in
-        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit) ;;
-        amd)    GPU_PKGS+=(mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-32bit) ;;
-        intel)  GPU_PKGS+=(mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver libva-intel-driver mesa-32bit) ;;
+        nvidia) GPU_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl nvidia-opencl-32bit) ;;
+        amd)    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit) ;;
+        intel)  GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver) ;;
     esac
 done
+
+if [ "${#GPU_VENDORS[@]}" -eq 0 ]; then
+    GPU_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit)
+fi
 
 if [ "${#GPU_PKGS[@]}" -gt 0 ]; then
     install_xbps_pkgs "${GPU_PKGS[@]}"
