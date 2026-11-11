@@ -482,8 +482,7 @@ fi
 if [[ -n "$LSFG_URL" ]] && curl -fsSL -A "$LSFG_UA" -o "$LSFG_TMP/lsfg-vk.tar.xz" "$LSFG_URL" 2>/dev/null && tar -tf "$LSFG_TMP/lsfg-vk.tar.xz" &>/dev/null && mkdir -p "$HOME/.local" && tar -xf "$LSFG_TMP/lsfg-vk.tar.xz" -C "$HOME/.local"; then
     :
 else
-    log_warn "lsfg-vk: nie udało się pobrać gotowej paczki, pomijam" \
-             "lsfg-vk: failed to download prebuilt package, skipping"
+    FAILED_PACKAGES+=("lsfg-vk")
 fi
 rm -rf "$LSFG_TMP"
 
@@ -667,11 +666,13 @@ if command -v zsh &>/dev/null; then
         retry_cmd 3 curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o "$OMZ_INSTALLER" \
             && sh "$OMZ_INSTALLER" --unattended || true
         rm -f "$OMZ_INSTALLER"
+        [ -d "$HOME/.oh-my-zsh" ] || FAILED_PACKAGES+=("oh-my-zsh")
     fi
 
     P10K_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
-    [ ! -d "$P10K_DIR" ] && \
-        retry_cmd 3 git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" || true
+    if [ ! -d "$P10K_DIR" ]; then
+        retry_cmd 3 git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" || FAILED_PACKAGES+=("powerlevel10k")
+    fi
 
     if [ -f ~/.zshrc ]; then
         sed -i 's|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' ~/.zshrc
