@@ -225,7 +225,6 @@ sudo xbps-install -Syu
 install_xbps_pkgs pciutils
 
 GPU_TYPE="unknown"
-HYBRID_GPU=false
 GPU_VENDORS=()
 GPU_UNKNOWN_PKGS=(
     mesa mesa-32bit mesa-dri mesa-dri-32bit vulkan-loader vulkan-loader-32bit
@@ -241,17 +240,11 @@ if command -v lspci &>/dev/null; then
     TOTAL_KNOWN=${#GPU_VENDORS[@]}
 
     if [ -z "$GPU_INFO" ] || [ "$TOTAL_KNOWN" -eq 0 ]; then
-        HYBRID_GPU=false
         for pkg in "${GPU_UNKNOWN_PKGS[@]}"; do
             pkg_installed "$pkg" || retry_cmd 3 sudo xbps-install -y "$pkg" || true
         done
-    elif [ "$TOTAL_KNOWN" -ge 2 ]; then
-        HYBRID_GPU=true
-        GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
-        log_info "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE" "Detected a hybrid GPU setup (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
     else
-        HYBRID_GPU=false
-        GPU_TYPE="${GPU_VENDORS[0]}"
+        GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
     fi
 else
     for pkg in "${GPU_UNKNOWN_PKGS[@]}"; do
