@@ -599,6 +599,7 @@ if [ -d /etc/sv/zramen ]; then
     printf "export ZRAM_COMP_ALGORITHM='zstd'\nexport ZRAM_SIZE=50\nexport ZRAM_PRIORITY=32767\n" | sudo tee /etc/sv/zramen/conf > /dev/null
     sudo mkdir -p /etc/sysctl.d
     printf "vm.swappiness=180\nvm.page-cluster=0\n" | sudo tee /etc/sysctl.d/99-zram.conf > /dev/null
+    grep -q '^exec >/dev/null 2>&1' /etc/sv/zramen/run || sudo sed -i '1a exec >/dev/null 2>\&1' /etc/sv/zramen/run
     sudo ln -sf /etc/sv/zramen /var/service/
 fi
 
