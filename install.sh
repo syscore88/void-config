@@ -362,7 +362,7 @@ show_progress 5 $TOTAL_STEPS "$MSG_PHASE_2"
 
 SYSTEM_PKGS=(
     elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager
-    bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pavucontrol
+    bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pulseaudio-utils pavucontrol
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
     curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
@@ -407,6 +407,22 @@ sudo ln -sf /usr/share/examples/wireplumber/10-wireplumber.conf /etc/pipewire/pi
 sudo ln -sf /usr/share/examples/pipewire/20-pipewire-pulse.conf /etc/pipewire/pipewire.conf.d/20-pipewire-pulse.conf
 sudo ln -sf /usr/share/alsa/alsa.conf.d/50-pipewire.conf /etc/alsa/conf.d/50-pipewire.conf
 sudo ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf /etc/alsa/conf.d/99-pipewire-default.conf
+
+# Autostart PipeWire (Void/runit nie ma usług użytkownika). Konfiguracje 10-wireplumber
+# i 20-pipewire-pulse powyżej sprawiają, że sam pipewire uruchamia wireplumber i pipewire-pulse.
+sudo mkdir -p /etc/xdg/autostart
+if [ -f /usr/share/applications/pipewire.desktop ]; then
+    sudo ln -sf /usr/share/applications/pipewire.desktop /etc/xdg/autostart/pipewire.desktop
+else
+    sudo tee /etc/xdg/autostart/pipewire.desktop > /dev/null << 'PW_EOF'
+[Desktop Entry]
+Type=Application
+Name=PipeWire
+Exec=pipewire
+X-KDE-autostart-phase=1
+NoDisplay=true
+PW_EOF
+fi
 
 mkdir -p "$HOME/.config/autostart"
 for f in /etc/xdg/autostart/gcdemu.desktop /etc/xdg/autostart/cdemu.desktop /usr/share/applications/gcdemu.desktop; do
