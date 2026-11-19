@@ -29,7 +29,7 @@ die() {
 [ "$(id -u)" -eq 0 ] || die "Uruchom skrypt jako root" "Run the script as root"
 [ -d /sys/firmware/efi ] || die "System nie jest uruchomiony w trybie UEFI" "The system is not booted in UEFI mode"
 
-xbps-install -Sy sbctl efibootmgr
+xbps-install -Sy sbctl efibootmgr || true
 
 ESP=""
 for d in /boot/efi /efi /boot; do
@@ -47,7 +47,7 @@ fi
 if command -v grub-install >/dev/null 2>&1; then
     GRUB_DIR="$(find "$ESP/EFI" -iname grubx64.efi 2>/dev/null | head -n1 | xargs -r dirname | xargs -r basename || true)"
     GRUB_ID="${GRUB_DIR:-void}"
-    GRUB_MODULES="all_video boot btrfs cat chain configfile cpuid echo efifwrw efinet ext2 fat font gettext gfxmenu gfxterm gfxterm_background gzio halt help hfsplus iso9660 jpeg keystatus loadenv loopback linux ls lsefi lsefimmap lsefisystab lssal memdisk minicmd normal part_apple part_gpt part_msdos password_pbkdf2 play png probe reboot regexp search search_fs_file search_fs_uuid search_label sleep smbios squash4 test tpm true video xfs zfs zfscrypt zfsinfo"
+    GRUB_MODULES="all_video boot btrfs cat chain configfile cpuid echo efinet ext2 fat font gettext gfxmenu gfxterm gfxterm_background gzio halt help hfsplus iso9660 jpeg keystatus loadenv loopback linux ls lsefi lsefimmap lsefisystab lssal memdisk minicmd normal part_apple part_gpt part_msdos password_pbkdf2 play png probe reboot regexp search search_fs_file search_fs_uuid search_label sleep smbios squash4 test tpm true video xfs zfs zfscrypt zfsinfo"
     grub-install --target=x86_64-efi --efi-directory="$ESP" --bootloader-id="$GRUB_ID" --modules="$GRUB_MODULES" --disable-shim-lock --recheck
     grub-mkconfig -o /boot/grub/grub.cfg
 fi
