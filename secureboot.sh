@@ -29,7 +29,13 @@ die() {
 [ "$(id -u)" -eq 0 ] || die "Uruchom skrypt jako root" "Run the script as root"
 [ -d /sys/firmware/efi ] || die "System nie jest uruchomiony w trybie UEFI" "The system is not booted in UEFI mode"
 
-xbps-install -Sy sbctl efibootmgr || true
+MISSING=""
+for p in sbctl efibootmgr; do
+    xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
+done
+if [ -n "$MISSING" ]; then
+    xbps-install -Sy $MISSING
+fi
 
 ESP=""
 for d in /boot/efi /efi /boot; do
@@ -77,7 +83,7 @@ else
         "Firmware is not in Setup Mode. Enter UEFI, clear the Secure Boot keys (Setup Mode), then run: sbctl enroll-keys --microsoft"
 fi
 
-sbctl verify || true
+sbctl --esp "$ESP" verify || true
 sbctl status || true
 
 msg "Gotowe. Uruchom ponownie komputer i włącz Secure Boot w ustawieniach UEFI." \
