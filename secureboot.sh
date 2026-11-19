@@ -21,7 +21,24 @@ msg() {
     fi
 }
 
+RED="$(printf '\033[31m')"
+GRN="$(printf '\033[32m')"
+YLW="$(printf '\033[33m')"
+BLU="$(printf '\033[34m')"
+RST="$(printf '\033[0m')"
+
+info() {
+    printf '%s[+]%s ' "$GRN" "$RST"
+    msg "$1" "$2"
+}
+
+warn() {
+    printf '%s[!]%s ' "$YLW" "$RST"
+    msg "$1" "$2"
+}
+
 die() {
+    printf '%s[x]%s ' "$RED" "$RST" >&2
     msg "$1" "$2" >&2
     exit 1
 }
@@ -89,14 +106,28 @@ sudo chmod 755 /etc/kernel.d/post-install/99-sbctl
 if sudo sbctl status 2>/dev/null | grep -i 'Setup Mode' | grep -qi 'enabled'; then
     sudo sbctl enroll-keys --microsoft
 else
-    msg "Firmware nie jest w trybie Setup Mode. Wejdź do UEFI, wyczyść klucze Secure Boot (Setup Mode), a następnie uruchom: sudo sbctl enroll-keys --microsoft" \
-        "Firmware is not in Setup Mode. Enter UEFI, clear the Secure Boot keys (Setup Mode), then run: sudo sbctl enroll-keys --microsoft"
+    warn "Firmware nie jest w trybie Setup Mode. Wejdź do UEFI, wyczyść klucze Secure Boot (Setup Mode), a następnie uruchom: sudo sbctl enroll-keys --microsoft" \
+         "Firmware is not in Setup Mode. Enter UEFI, clear the Secure Boot keys (Setup Mode), then run: sudo sbctl enroll-keys --microsoft"
 fi
 
 sudo sbctl --esp "$ESP" verify || true
 sudo sbctl status || true
 
-msg "Gotowe. Uruchom ponownie komputer i włącz Secure Boot w ustawieniach UEFI." \
-    "Done. Restart the computer and enable Secure Boot in the UEFI settings."
-msg "Po każdej aktualizacji pakietu grub trzeba ponownie uruchomić grub-install i podpisać nowy plik grubx64.efi przez sbctl sign-all." \
-    "After every grub package update, you must run grub-install again and sign the new grubx64.efi file with sbctl sign-all."
+info "Gotowe. Uruchom ponownie komputer i włącz Secure Boot w ustawieniach UEFI." \
+     "Done. Restart the computer and enable Secure Boot in the UEFI settings."
+warn "Po każdej aktualizacji pakietu grub trzeba ponownie uruchomić grub-install i podpisać nowy plik grubx64.efi przez sbctl sign-all." \
+     "After every grub package update, you must run grub-install again and sign the new grubx64.efi file with sbctl sign-all."
+
+if [ "$SCRIPT_LANG" = "pl" ]; then
+    RESTART_PROMPT="Czy chcesz teraz zrestartować system? [T/N]: "
+else
+    RESTART_PROMPT="Do you want to restart the system now? [Y/N]: "
+fi
+printf '%s==> %s%s' "$BLU" "$RESTART_PROMPT" "$RST"
+read -r RESTART_CHOICE < /dev/tty || RESTART_CHOICE=""
+case "$RESTART_CHOICE" in
+    [YyTt]*)
+        sudo reboot
+        ;;
+esac
+exit 0
