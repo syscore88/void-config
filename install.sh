@@ -364,7 +364,7 @@ SYSTEM_PKGS=(
     elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pulseaudio-utils pavucontrol
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
-    curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak
+    curl wget git xtools vkpurge base-devel xdg-utils xdg-user-dirs flatpak
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1
@@ -386,7 +386,14 @@ PKGS_CODECS=(
 
 for vendor in "${GPU_VENDORS[@]}"; do
     case "$vendor" in
-        "nvidia") SYSTEM_PKGS+=(nvidia nvidia-libs-32bit nvidia-opencl mesa-dri vulkan-loader vulkan-loader-32bit) ;;
+        "nvidia")
+            if xbps-query -R nvidia-open &>/dev/null; then
+                SYSTEM_PKGS+=(nvidia-open)
+            else
+                SYSTEM_PKGS+=(nvidia)
+            fi
+            SYSTEM_PKGS+=(nvidia-libs-32bit nvidia-opencl mesa-dri vulkan-loader vulkan-loader-32bit)
+            ;;
         "amd")    SYSTEM_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-radeon mesa-vulkan-radeon-32bit mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
         "intel")  SYSTEM_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
     esac
