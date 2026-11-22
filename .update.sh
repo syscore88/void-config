@@ -3,6 +3,8 @@ set -uo pipefail
 
 detect_system_lang() {
     local sys_lang="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
+    sys_lang="${sys_lang//\"/}"
+    sys_lang="${sys_lang//\'/}"
     if [[ "$sys_lang" == pl* ]]; then
         echo "pl"
     else
@@ -29,21 +31,21 @@ PRIVS_GRANTED=0
 
 remove_temp_privs() {
     [[ "$PRIVS_GRANTED" -eq 1 ]] || return 0
-    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null
+    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null || true
     PRIVS_GRANTED=0
 }
 
 cleanup_on_exit() {
     local exit_code=$?
     remove_temp_privs
-    printf '\033[?25h' >&3
-    echo "" >&3
+    printf '\033[?25h' >&3 2>/dev/null || true
+    echo "" >&3 2>/dev/null || true
     if [ "$exit_code" -ne 0 ]; then
         cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null || true
         if [[ "$SCRIPT_LANG" == "pl" ]]; then
-            echo -e "${ERR}[X] Wystąpił błąd (kod: $exit_code). Szczegółowy log zapisano w: $LOG_FILE${NC}" >&3
+            echo -e "${ERR}[X] Wystąpił błąd (kod: $exit_code). Szczegółowy log zapisano w: $LOG_FILE${NC}" >&3 2>/dev/null || true
         else
-            echo -e "${ERR}[X] An error occurred (code: $exit_code). Detailed log saved to: $LOG_FILE${NC}" >&3
+            echo -e "${ERR}[X] An error occurred (code: $exit_code). Detailed log saved to: $LOG_FILE${NC}" >&3 2>/dev/null || true
         fi
     else
         rm -f "$LOG_FILE"
@@ -71,21 +73,23 @@ show_progress() {
 
     local overhead=$(( bar_width + reserved ))
     local avail=$(( cols - overhead ))
-    if (( avail < 5 )); then avail=5; fi
-    if (( ${#msg} > avail )); then
-        msg="${msg:0:$((avail - 3))}..."
-    fi
 
     local filled=$(( percent * bar_width / 100 ))
     local empty=$(( bar_width - filled ))
 
     local bar_filled=""
     local bar_empty=""
-    if [ $filled -gt 0 ]; then printf -v bar_filled '%*s' "$filled" ''; bar_filled="${bar_filled// /#}"; fi
-    if [ $empty -gt 0 ]; then printf -v bar_empty '%*s' "$empty" ''; bar_empty="${bar_empty// /-}"; fi
+    if [ "$filled" -gt 0 ]; then printf -v bar_filled '%*s' "$filled" ''; bar_filled="${bar_filled// /#}"; fi
+    if [ "$empty" -gt 0 ]; then printf -v bar_empty '%*s' "$empty" ''; bar_empty="${bar_empty// /-}"; fi
 
-    printf "\r\033[K[\033[1;32m%s\033[0;90m%s\033[0m] %3d%% | \033[1;36m%s\033[0m" "$bar_filled" "$bar_empty" "$percent" "$msg" >&3
-    cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null || true
+    if (( avail >= 4 )); then
+        if (( ${#msg} > avail )); then
+            msg="${msg:0:$((avail - 3))}..."
+        fi
+        printf "\r\033[K[\033[1;32m%s\033[0;90m%s\033[0m] %3d%% | \033[1;36m%s\033[0m" "$bar_filled" "$bar_empty" "$percent" "$msg" >&3
+    else
+        printf "\r\033[K[\033[1;32m%s\033[0;90m%s\033[0m] %3d%%" "$bar_filled" "$bar_empty" "$percent" >&3
+    fi
 }
 
 print_pkg_list() {
@@ -111,6 +115,7 @@ if [ "$SCRIPT_LANG" = "pl" ]; then
     MSG_RESTART_WARN="UWAGA: Zalecany jest restart komputera"
     MSG_NO_RESTART="Restart systemu nie jest aktualnie wymagany."
     MSG_PRESS_ENTER="Naciśnij Enter, aby zamknąć okno..."
+    MSG_UPDATE_FAIL="[X] Aktualizacja pakietów xbps nie powiodła się – przerywam."
 else
     MSG_TITLE="                   SYSTEM MAINTENANCE                   "
     MSG_ASK_PASS="Please enter the administrator (sudo) password:"
@@ -123,13 +128,14 @@ else
     MSG_RESTART_WARN="WARNING: A system restart is recommended"
     MSG_NO_RESTART="A system restart is not currently required."
     MSG_PRESS_ENTER="Press Enter to close this window..."
+    MSG_UPDATE_FAIL="[X] xbps package update failed - aborting."
 fi
 
 CURRENT_USER=$(whoami)
 
 cleanup_stale_privs() {
     sudo -n true 2>/dev/null || return 0
-    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null
+    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null || true
 }
 cleanup_stale_privs
 
@@ -147,6 +153,7 @@ echo "" >&3
 SUDOERS_TMP="$(mktemp)"
 printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$CURRENT_USER" > "$SUDOERS_TMP"
 if printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' visudo -cf "$SUDOERS_TMP" &>/dev/null \
+   && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -d -m 0750 -o root -g root /etc/sudoers.d &>/dev/null \
    && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/99-temp-update &>/dev/null; then
     PRIVS_GRANTED=1
     rm -f "$SUDOERS_TMP"
@@ -180,18 +187,31 @@ fi
 
 TOTAL_STEPS=17
 STEP=0
+printf '\033[?25l' >&3
 show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 # ---------------------------------------------------------------
 # PHASE: UPDATE
 # ---------------------------------------------------------------
 sudo env LC_ALL=C xbps-install -Syu xbps
+XBPS_RC=$?
+if [ "$XBPS_RC" -ne 0 ]; then
+    printf "\r\033[K" >&3
+    echo -e "${ERR}${MSG_UPDATE_FAIL}${NC}" >&3
+    exit "$XBPS_RC"
+fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 PKG_VERSIONS=$(sudo env LC_ALL=C xbps-install -un 2>/dev/null | awk 'NF >= 2 { print $1 }' | sort -u)
 
 XBPS_OUTPUT=$(sudo env LC_ALL=C xbps-install -yu 2>&1)
+XBPS_RC=$?
 echo "$XBPS_OUTPUT"
+if [ "$XBPS_RC" -ne 0 ]; then
+    printf "\r\033[K" >&3
+    echo -e "${ERR}${MSG_UPDATE_FAIL}${NC}" >&3
+    exit "$XBPS_RC"
+fi
 
 if [ -n "$PKG_VERSIONS" ]; then
     print_pkg_list "$MSG_PKGS_UPDATED" "$PKG_VERSIONS"
@@ -213,8 +233,8 @@ fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 if command -v fwupdmgr &> /dev/null; then
-    sudo fwupdmgr refresh --force
-    FWUPD_OUT=$(sudo fwupdmgr update -y 2>&1)
+    sudo env LC_ALL=C fwupdmgr refresh --force
+    FWUPD_OUT=$(sudo env LC_ALL=C fwupdmgr update -y --no-reboot-check 2>&1)
     echo "$FWUPD_OUT"
     if echo "$FWUPD_OUT" | grep -qiE "restart|reboot"; then
         RESTART_NEEDED=true
@@ -230,9 +250,9 @@ STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 sudo env LC_ALL=C xbps-remove -oy
 if command -v vkpurge &> /dev/null; then
-    OLD_KERNELS=$(vkpurge list 2>/dev/null | sort -V | head -n -1)
-    if [ -n "$OLD_KERNELS" ]; then
-        sudo vkpurge rm $OLD_KERNELS
+    mapfile -t OLD_KERNELS < <(vkpurge list 2>/dev/null | sort -V | head -n -1)
+    if (( ${#OLD_KERNELS[@]} > 0 )); then
+        sudo vkpurge rm "${OLD_KERNELS[@]}"
     fi
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
@@ -240,7 +260,7 @@ STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 sudo find /var/cache/xbps -maxdepth 1 -type f -name '*.xbps' 2>/dev/null \
     | awk -F/ '{ f = $NF; n = f; sub(/-[^-]+_[0-9]+\.[^.]+\.xbps$/, "", n); a = f; sub(/\.xbps$/, "", a); sub(/^.*\./, "", a); printf "%s.%s\t%s\t%s\n", n, a, f, $0 }' \
     | env LC_ALL=C sort -t$'\t' -k1,1 -k2,2Vr \
-    | awk -F'\t' '$1 == prev { n++ } $1 != prev { n = 1; prev = $1 } n > 2 { print $3; print $3 ".sig2" }' \
+    | awk -F'\t' '$1 == prev { n++ } $1 != prev { n = 1; prev = $1 } n > 2 { print $3; print $3 ".sig"; print $3 ".sig2" }' \
     | xargs -r -d '\n' sudo rm -f --
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
@@ -251,20 +271,20 @@ if command -v flatpak &> /dev/null; then
 
     FLATPAK_AFTER=$(flatpak list --system --app --columns=application,version 2>/dev/null)
 
-    FLATPAK_PKGS=$(join -t$'\t' -j1 \
-        <(echo "$FLATPAK_BEFORE" | sort -t$'\t' -k1,1) \
-        <(echo "$FLATPAK_AFTER" | sort -t$'\t' -k1,1) 2>/dev/null \
+    FLATPAK_PKGS=$(LC_ALL=C join -t$'\t' -j1 \
+        <(echo "$FLATPAK_BEFORE" | LC_ALL=C sort -t$'\t' -k1,1) \
+        <(echo "$FLATPAK_AFTER" | LC_ALL=C sort -t$'\t' -k1,1) 2>/dev/null \
         | awk -F'\t' '$2 != $3 { printf "%s: %s → %s\n", $1, ($2==""?"?":$2), ($3==""?"?":$3) }')
     print_pkg_list "$MSG_FLATPAK_UPDATED" "$FLATPAK_PKGS"
 
     sudo flatpak uninstall --unused --system --delete-data -y
     sudo flatpak repair --system
 
-    USED_REMOTES=$(flatpak list --columns=origin 2>/dev/null | sort -u)
-    ALL_REMOTES=$(flatpak remotes --columns=name 2>/dev/null)
+    USED_REMOTES=$(flatpak list --system --columns=origin 2>/dev/null | sort -u)
+    ALL_REMOTES=$(flatpak remotes --system --columns=name 2>/dev/null)
     while IFS= read -r remote; do
         if [ -n "$remote" ] && [ "$remote" != "flathub" ] && ! echo "$USED_REMOTES" | grep -qxF -- "$remote"; then
-            sudo flatpak remote-delete --force "$remote" 2>/dev/null
+            sudo flatpak remote-delete --system --force "$remote" 2>/dev/null
         fi
     done <<< "$ALL_REMOTES"
 
@@ -299,9 +319,9 @@ if command -v flatpak &> /dev/null; then
 
     FLATPAK_AFTER=$(flatpak list --user --app --columns=application,version 2>/dev/null)
 
-    FLATPAK_PKGS=$(join -t$'\t' -j1 \
-        <(echo "$FLATPAK_BEFORE" | sort -t$'\t' -k1,1) \
-        <(echo "$FLATPAK_AFTER" | sort -t$'\t' -k1,1) 2>/dev/null \
+    FLATPAK_PKGS=$(LC_ALL=C join -t$'\t' -j1 \
+        <(echo "$FLATPAK_BEFORE" | LC_ALL=C sort -t$'\t' -k1,1) \
+        <(echo "$FLATPAK_AFTER" | LC_ALL=C sort -t$'\t' -k1,1) 2>/dev/null \
         | awk -F'\t' '$2 != $3 { printf "%s: %s → %s\n", $1, ($2==""?"?":$2), ($3==""?"?":$3) }')
     print_pkg_list "$MSG_FLATPAK_UPDATED" "$FLATPAK_PKGS"
 
@@ -344,7 +364,7 @@ fc-cache -r
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 USER_ID=$(id -u)
-if [ -S "/run/user/$USER_ID/bus" ]; then
+if command -v dconf &> /dev/null && [ -S "/run/user/$USER_ID/bus" ]; then
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" dconf reset /org/virt-manager/virt-manager/urls/isos 2>/dev/null
 fi
 rm -rf "$HOME/.cache/virt-manager" 2>/dev/null
@@ -359,7 +379,9 @@ if command -v needrestart &> /dev/null; then
         RESTART_NEEDED=true
     fi
 else
-    if [ ! -d "/usr/lib/modules/$(uname -r)" ]; then
+    RUNNING_KERNEL="$(uname -r)"
+    LATEST_KERNEL=$(for f in /boot/vmlinuz-*; do [ -e "$f" ] && printf '%s\n' "${f##*/vmlinuz-}"; done | sort -V | tail -n1)
+    if [ ! -d "/usr/lib/modules/$RUNNING_KERNEL" ] || { [ -n "$LATEST_KERNEL" ] && [ "$LATEST_KERNEL" != "$RUNNING_KERNEL" ]; }; then
         RESTART_NEEDED=true
     fi
 fi
@@ -367,6 +389,7 @@ STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 remove_temp_privs
 
+printf '\033[?25h' >&3 2>/dev/null || true
 echo -e "\n" >&3
 echo -e "${SUCCESS}======================================================${NC}" >&3
 echo -e "${SUCCESS}${MSG_DONE}${NC}" >&3
@@ -378,4 +401,8 @@ else
     echo -e "${INFO}${MSG_NO_RESTART}${NC}" >&3
 fi
 echo -e "${WARN}${MSG_PRESS_ENTER}${NC}" >&3
-read -r
+if [[ -r /dev/tty ]]; then
+    read -r < /dev/tty || true
+else
+    read -r || true
+fi
