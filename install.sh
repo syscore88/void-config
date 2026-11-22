@@ -338,7 +338,7 @@ TO_REMOVE=(
     totem pragha transmission-qt
 )
 PROTECTED_PKGS=(
-    plasma-desktop plasma-workspace gnome-shell gnome-session gdm sddm
+    plasma-desktop plasma-workspace gnome-shell gnome-session gdm
     plasma-login-manager NetworkManager sudo cosmic-session
 )
 TO_REMOVE_RE="^($(IFS='|'; echo "${TO_REMOVE[*]}"))\$"
