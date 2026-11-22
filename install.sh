@@ -7,8 +7,7 @@ set -Eeuo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
 
 detect_system_lang() {
-    local sys_lang="${LANG:-}"
-    [[ -z "$sys_lang" ]] && sys_lang="${LC_ALL:-${LC_MESSAGES:-}}"
+    local sys_lang="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
     if [[ "$sys_lang" == pl* ]]; then
         echo "pl"
     else
@@ -26,42 +25,85 @@ NC='\033[0m'
 TMP_LOG="$(mktemp /tmp/install-log.XXXXXX)"
 LOG_FILE="$HOME/install_error_$(date +%Y%m%d_%H%M%S).log"
 
+FAILED_PACKAGES=()
+QUIET_WARNS=0
+SUDO_READY=0
+SUDO_KEEPALIVE_PID=""
+DO_REBOOT=0
+SUDOERS_TMP=""
+TEMP_SUDOERS="/etc/sudoers.d/99-temp-installer"
+LSFG_TMP=""
+LIBVIRT_NET_XML=""
+LIBVIRT_NET_BAK=""
+LIBVIRT_NET_RESTORE=0
+OMZ_INSTALLER=""
+DATA_BACKUP_DIR="$HOME/.installer-backup-$(date +%Y%m%d_%H%M%S)"
+
 exec 3>&1
 exec >>"$TMP_LOG" 2>&1
 
 cleanup_on_exit() {
     local exit_code=$?
-    [ -n "${SUDO_KEEPALIVE_PID:-}" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-    printf '\033[?7h' >&3
-    if [ "$exit_code" -ne 0 ] || [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
-        echo -e "\n" >&3
-        cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null || true
+    trap '' INT TERM HUP
+    trap - ERR
+    set +e
+
+    if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+        pkill -P "$SUDO_KEEPALIVE_PID" 2>/dev/null
+    fi
+
+    if [ "$SUDO_READY" = "1" ] && [ "$LIBVIRT_NET_RESTORE" = "1" ] && [ -s "$LIBVIRT_NET_BAK" ]; then
+        sudo -n virsh net-define "$LIBVIRT_NET_BAK" &>/dev/null
+        sudo -n virsh net-start default &>/dev/null
+        sudo -n virsh net-autostart default &>/dev/null
+    fi
+
+    rm -f "$SUDOERS_TMP" "$LIBVIRT_NET_XML" "$LIBVIRT_NET_BAK" "$OMZ_INSTALLER"
+    rm -rf "$LSFG_TMP"
+
+    if [ "$exit_code" -ne 0 ] || [ "${#FAILED_PACKAGES[@]}" -gt 0 ] || [ "$QUIET_WARNS" -gt 0 ]; then
+        cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null
+    else
+        rm -f "$HOME"/install_error_*.log
+    fi
+
+    {
+        printf '\033[?7h'
+        if [ "$exit_code" -ne 0 ] || [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
+            echo -e "\n"
+        fi
         if [ "$exit_code" -ne 0 ]; then
             if [[ "$SCRIPT_LANG" == "pl" ]]; then
-                echo -e "${ERR}[X] Wystąpił błąd (kod: $exit_code). Szczegółowy log zapisano w: $LOG_FILE${NC}" >&3
+                echo -e "${ERR}[X] Wystąpił błąd (kod: $exit_code). Szczegółowy log zapisano w: $LOG_FILE${NC}"
             else
-                echo -e "${ERR}[X] An error occurred (code: $exit_code). Detailed log saved to: $LOG_FILE${NC}" >&3
+                echo -e "${ERR}[X] An error occurred (code: $exit_code). Detailed log saved to: $LOG_FILE${NC}"
             fi
         fi
-    fi
+    } >&3 2>/dev/null
+
     rm -f "$TMP_LOG"
+
     local do_reboot=0
-    [ "$exit_code" -eq 0 ] && [ "${DO_REBOOT:-0}" = "1" ] && do_reboot=1
-    if [ "${SUDO_READY:-0}" = "1" ]; then
-        sudo sh -c 'rm -f "$1" "$2"; if [ "$3" = 1 ]; then reboot; fi' _ \
-            "${RUN0_NOPASSWD_FILE:-/etc/polkit-1/rules.d/51-run0-nopasswd.rules}" \
-            "/etc/sudoers.d/99-temp-installer" \
-            "$do_reboot"
+    if [ "$exit_code" -eq 0 ] && [ "$DO_REBOOT" = "1" ]; then
+        do_reboot=1
+    fi
+    if [ "$SUDO_READY" = "1" ]; then
+        sudo -n sh -c 'rm -f "$1"; if [ "$2" = 1 ]; then reboot; fi' _ "$TEMP_SUDOERS" "$do_reboot"
     fi
 }
 trap cleanup_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 _pick_msg() { [[ "$SCRIPT_LANG" == "pl" ]] && echo "$1" || echo "$2"; }
-_log_write() { printf "\r\033[K" >&3; echo -e "$1" >&3; echo -e "$1"; cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null || true; }
+_log_write() { printf "\r\033[K" >&3 2>/dev/null || true; echo -e "$1" >&3 2>/dev/null || true; echo -e "$1"; cp -f "$TMP_LOG" "$LOG_FILE" 2>/dev/null || true; }
 log_info()  { local m; m="$(_pick_msg "$1" "$2")"; _log_write "${INFO}==> $m${NC}"; }
 log_ok()    { local m; m="$(_pick_msg "$1" "$2")"; _log_write "${SUCCESS}[OK] $m${NC}"; }
 log_err()   { local m; m="$(_pick_msg "$1" "$2")"; _log_write "${ERR}[X] ERROR: $m${NC}"; }
 log_warn()  { local m; m="$(_pick_msg "$1" "$2")"; _log_write "${WARN}[!] WARN: $m${NC}"; }
+log_quiet() { local m; m="$(_pick_msg "$1" "$2")"; echo "[!] WARN: $m"; QUIET_WARNS=$(( QUIET_WARNS + 1 )); }
 
 trap 'log_err "Błąd w linii $LINENO. Polecenie: $BASH_COMMAND" "Error at line $LINENO. Command: $BASH_COMMAND"' ERR
 
@@ -98,7 +140,7 @@ show_progress() {
     if [ $filled -gt 0 ]; then printf -v bar_filled '%*s' "$filled" ''; bar_filled="${bar_filled// /#}"; fi
     if [ $empty -gt 0 ]; then printf -v bar_empty '%*s' "$empty" ''; bar_empty="${bar_empty// /-}"; fi
 
-    printf "\r\033[K[\033[1;32m%s\033[0;90m%s\033[0m] %3d%% | \033[1;36m%s\033[0m" "$bar_filled" "$bar_empty" "$percent" "$msg" >&3
+    printf "\r\033[K[\033[1;32m%s\033[0;90m%s\033[0m] %3d%% | \033[1;36m%s\033[0m" "$bar_filled" "$bar_empty" "$percent" "$msg" >&3 2>/dev/null || true
 }
 
 if [[ "$SCRIPT_LANG" == "pl" ]]; then
@@ -114,7 +156,6 @@ else
 fi
 
 TOTAL_STEPS=12
-FAILED_PACKAGES=()
 
 if [[ "$EUID" -eq 0 ]]; then
     if [[ "$SCRIPT_LANG" == "pl" ]]; then
@@ -130,55 +171,43 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 printf '\033[?7h\n' >&3
 
-RUN0_NOPASSWD_FILE="/etc/polkit-1/rules.d/51-run0-nopasswd.rules"
-USE_RUN0=0
-if ! command -v visudo >/dev/null 2>&1 || sudo --version 2>/dev/null | grep -qi "run0"; then
-    USE_RUN0=1
-fi
-
-SUDO_READY=0
-if [[ "$USE_RUN0" -eq 1 ]]; then
-    sudo mkdir -p /etc/polkit-1/rules.d
-    sudo tee "$RUN0_NOPASSWD_FILE" > /dev/null << EOF
-polkit.addRule(function(action, subject) {
-    if (subject.user == "$CURRENT_USER") {
-        return polkit.Result.YES;
-    }
-});
-EOF
-    SUDO_READY=1
-else
-    sudo -v
-
-    (
-        set +e
-        trap - ERR
-        while true; do
-            sudo -n true
-            sleep 60
-            kill -0 "$$" 2>/dev/null || exit
-        done
-    ) &
-    SUDO_KEEPALIVE_PID=$!
-
-    SUDOERS_TMP="$(mktemp)"
-    echo "$CURRENT_USER ALL=(ALL) NOPASSWD: ALL" > "$SUDOERS_TMP"
-    if sudo visudo -cf "$SUDOERS_TMP" &>/dev/null; then
-        sudo install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/99-temp-installer
-        echo "%wheel ALL=(ALL) NOPASSWD: ALL" > "$SUDOERS_TMP"
-        sudo visudo -cf "$SUDOERS_TMP" &>/dev/null && sudo install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/99_nopasswd || true
+if ! command -v sudo >/dev/null 2>&1 || ! command -v visudo >/dev/null 2>&1; then
+    if [[ "$SCRIPT_LANG" == "pl" ]]; then
+        echo -e "${ERR}[X] Brak sudo lub visudo – przerywam.${NC}" >&3
     else
-        rm -f "$SUDOERS_TMP"
-        if [[ "$SCRIPT_LANG" == "pl" ]]; then
-            echo -e "${ERR}[X] Nieprawidłowa składnia pliku sudoers – przerywam.${NC}" >&3
-        else
-            echo -e "${ERR}[X] Invalid sudoers rule syntax - aborting.${NC}" >&3
-        fi
-        exit 1
+        echo -e "${ERR}[X] sudo or visudo not found - aborting.${NC}" >&3
     fi
-    rm -f "$SUDOERS_TMP"
-    SUDO_READY=1
+    exit 1
 fi
+
+sudo -v
+SUDO_READY=1
+
+(
+    set +e
+    trap - ERR
+    while true; do
+        sudo -n true
+        sleep 60
+        kill -0 "$$" 2>/dev/null || exit
+    done
+) &
+SUDO_KEEPALIVE_PID=$!
+
+SUDOERS_TMP="$(mktemp)"
+echo "$CURRENT_USER ALL=(ALL) NOPASSWD: ALL" > "$SUDOERS_TMP"
+if sudo visudo -cf "$SUDOERS_TMP" &>/dev/null; then
+    sudo install -m 0440 -o root -g root "$SUDOERS_TMP" "$TEMP_SUDOERS"
+else
+    rm -f "$SUDOERS_TMP"
+    if [[ "$SCRIPT_LANG" == "pl" ]]; then
+        echo -e "${ERR}[X] Nieprawidłowa składnia pliku sudoers – przerywam.${NC}" >&3
+    else
+        echo -e "${ERR}[X] Invalid sudoers rule syntax - aborting.${NC}" >&3
+    fi
+    exit 1
+fi
+rm -f "$SUDOERS_TMP"
 
 printf '\033[?7l' >&3
 
@@ -233,7 +262,7 @@ enable_service() {
     if [ -d "/etc/sv/$1" ]; then
         sudo ln -sf "/etc/sv/$1" /var/service/
     else
-        log_warn "Pominięto usługę $1 (brak /etc/sv/$1)" "Skipped service $1 (/etc/sv/$1 not found)"
+        log_quiet "Pominięto usługę $1 (brak /etc/sv/$1)" "Skipped service $1 (/etc/sv/$1 not found)"
     fi
 }
 
@@ -241,11 +270,40 @@ dconf_load() {
     dbus-run-session -- dconf load "$1" || true
 }
 
+backup_move() {
+    local p rel
+    for p in "$@"; do
+        if [ -e "$p" ]; then
+            rel="${p#"$HOME"/}"
+            mkdir -p "$DATA_BACKUP_DIR/$(dirname "$rel")"
+            mv -f "$p" "$DATA_BACKUP_DIR/$rel" || true
+        fi
+    done
+}
+
+move_app_data() {
+    local pkgs="$1" p pat base
+    shift
+    for p in $pkgs; do
+        if pkg_installed "$p"; then return 0; fi
+    done
+    for pat in "$@"; do
+        for base in "$HOME/.local/share" "$HOME/.config"; do
+            for p in "$base"/$pat; do
+                backup_move "$p"
+            done
+        done
+        for p in "$HOME/.cache"/$pat; do
+            if [ -e "$p" ]; then rm -rf "$p"; fi
+        done
+    done
+}
+
 sudo usermod -aG wheel,audio,video,input,bluetooth "$CURRENT_USER" 2>/dev/null || sudo usermod -aG wheel,audio,video,input "$CURRENT_USER"
 
-sudo xbps-install -Syu xbps || true
-sudo xbps-install -Sy void-repo-nonfree void-repo-multilib void-repo-multilib-nonfree || true
-sudo xbps-install -Sy || true
+retry_cmd 3 sudo xbps-install -Syu xbps || { log_err "Aktualizacja xbps nie powiodła się – przerywam." "xbps update failed - aborting."; exit 1; }
+sudo xbps-install -Sy void-repo-nonfree void-repo-multilib void-repo-multilib-nonfree || log_quiet "Nie udało się dodać repozytoriów void-repo-*." "Failed to add void-repo-* repositories."
+retry_cmd 3 sudo xbps-install -Syu || { log_err "Pełna aktualizacja systemu nie powiodła się – przerywam." "Full system update failed - aborting."; exit 1; }
 
 install_xbps_pkgs pciutils curl xz tar
 
@@ -259,9 +317,9 @@ GPU_UNKNOWN_PKGS=(
 if command -v lspci &>/dev/null; then
     GPU_INFO=$(lspci | grep -i -E "vga|3d|display" || true)
 
-    echo "$GPU_INFO" | grep -qi "nvidia"      && GPU_VENDORS+=("nvidia")
-    echo "$GPU_INFO" | grep -qi -E "\b(amd|ati)\b|advanced micro devices|radeon" && GPU_VENDORS+=("amd")
-    echo "$GPU_INFO" | grep -qi "intel"       && GPU_VENDORS+=("intel")
+    grep -qi "nvidia" <<< "$GPU_INFO"      && GPU_VENDORS+=("nvidia")
+    grep -qi -E "\b(amd|ati)\b|advanced micro devices|radeon" <<< "$GPU_INFO" && GPU_VENDORS+=("amd")
+    grep -qi "intel" <<< "$GPU_INFO"       && GPU_VENDORS+=("intel")
 
     TOTAL_KNOWN=${#GPU_VENDORS[@]}
 
@@ -271,7 +329,7 @@ if command -v lspci &>/dev/null; then
     elif [ "$TOTAL_KNOWN" -ge 2 ]; then
         HYBRID_GPU=true
         GPU_TYPE="$(IFS=+; echo "${GPU_VENDORS[*]}")"
-        log_info "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE" "Detected a hybrid GPU setup (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
+        echo "Wykryto hybrydowy układ graficzny (HYBRID_GPU=$HYBRID_GPU): $GPU_TYPE"
     else
         HYBRID_GPU=false
         GPU_TYPE="${GPU_VENDORS[0]}"
@@ -309,15 +367,56 @@ TO_REMOVE=(
     elisa dragon transmission-gtk exaile mpv juk yelp
     totem pragha transmission-qt
 )
-for pkg in "${TO_REMOVE[@]}"; do
+PROTECTED_PKGS=(
+    plasma-desktop plasma-workspace gnome-shell gnome-session gdm sddm
+    plasma-login-manager NetworkManager sudo cosmic-session
+)
+for pkg in "${PROTECTED_PKGS[@]}"; do
     if pkg_installed "$pkg"; then
-        sudo xbps-remove -Ry "$pkg" 2>/dev/null || true
+        sudo xbps-pkgdb -m manual "$pkg" || true
     fi
 done
-sudo xbps-remove -Oo -y 2>/dev/null || true
+
+REMOVE_LIST=()
+for pkg in "${TO_REMOVE[@]}"; do
+    if pkg_installed "$pkg"; then
+        REMOVE_LIST+=("$pkg")
+    fi
+done
+if [ "${#REMOVE_LIST[@]}" -gt 0 ]; then
+    if ! sudo xbps-remove -Ry "${REMOVE_LIST[@]}"; then
+        REMOVE_PROGRESS=1
+        while [ "$REMOVE_PROGRESS" -eq 1 ] && [ "${#REMOVE_LIST[@]}" -gt 0 ]; do
+            REMOVE_PROGRESS=0
+            REMOVE_LEFT=()
+            for pkg in "${REMOVE_LIST[@]}"; do
+                if sudo xbps-remove -Ry "$pkg"; then
+                    REMOVE_PROGRESS=1
+                else
+                    REMOVE_LEFT+=("$pkg")
+                fi
+            done
+            REMOVE_LIST=("${REMOVE_LEFT[@]}")
+        done
+        for pkg in "${REMOVE_LIST[@]}"; do
+            log_quiet "Nie udało się usunąć pakietu: $pkg" "Could not remove package: $pkg"
+        done
+    fi
+fi
+
+ORPHAN_SIM="$(sudo xbps-remove -on 2>&1 || true)"
+if grep -qwE "$(IFS='|'; echo "${PROTECTED_PKGS[*]}")" <<< "$ORPHAN_SIM"; then
+    log_quiet "Pominięto usuwanie osieroconych pakietów (objęłoby pakiety pulpitu)." "Skipped orphan removal (it would affect desktop packages)."
+else
+    sudo xbps-remove -Ooy || log_quiet "Nie udało się usunąć osieroconych pakietów." "Orphan package removal failed."
+fi
 
 if pkg_installed plasma-desktop || pkg_installed plasma-workspace; then
     mkdir -p ~/.config
+    if [ -f ~/.config/kwalletrc ]; then
+        mkdir -p "$DATA_BACKUP_DIR/.config"
+        cp -a ~/.config/kwalletrc "$DATA_BACKUP_DIR/.config/kwalletrc" || true
+    fi
     cat > ~/.config/kwalletrc << 'KWALLET_EOF'
 [Wallet]
 Close When Idle=false
@@ -336,12 +435,19 @@ Use One Wallet=true
 apiEnabled=false
 KWALLET_EOF
 fi
-rm -rf ~/.local/share/akonadi ~/.local/share/kmail2 ~/.local/share/local-mail ~/.local/share/contacts ~/.local/share/korganizer ~/.local/share/akregator ~/.local/share/kontact ~/.local/share/konqueror
-rm -rf ~/.config/akonadi* ~/.config/kmail* ~/.config/kontact* ~/.config/korganizer* ~/.config/kaddressbook* ~/.config/akregator* ~/.config/emailidentities ~/.config/mailtransports
-rm -rf ~/.cache/akonadi* ~/.cache/kmail* ~/.cache/kontact* ~/.cache/korganizer* ~/.cache/kaddressbook* ~/.cache/akregator* ~/.cache/konqueror*
-rm -rf ~/.local/share/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,evolution,gnome-calendar,gnome-clocks,gnome-music,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
-rm -rf ~/.config/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,gnome-calendar,evolution,gnome-clocks,gnome-music,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
-rm -rf ~/.cache/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,gnome-calendar,evolution,gnome-clocks,gnome-music,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
+
+move_app_data akonadi 'akonadi*'
+move_app_data kmail 'kmail*' kmail2 local-mail emailidentities mailtransports
+move_app_data kaddressbook 'kaddressbook*' contacts
+move_app_data korganizer 'korganizer*'
+move_app_data akregator 'akregator*'
+move_app_data kontact 'kontact*'
+move_app_data konqueror 'konqueror*'
+for name in gnome-software epiphany decibels rhythmbox showtime parole evolution gnome-calendar gnome-clocks gnome-music gnome-contacts gnome-maps gnome-weather yelp elisa cosmic-store cosmic-player pragha totem exaile mpv juk; do
+    move_app_data "$name" "$name"
+done
+move_app_data dragon dragonplayer
+move_app_data "transmission-gtk transmission-qt" transmission
 
 show_progress 2 $TOTAL_STEPS "$MSG_PHASE_1"
 
@@ -355,8 +461,6 @@ show_progress 3 $TOTAL_STEPS "$MSG_PHASE_1"
 #  ETAP 2/4: INSTALACJA
 # =============================================================
 show_progress 4 $TOTAL_STEPS "$MSG_PHASE_2"
-
-sudo xbps-install -Syu || true
 
 show_progress 5 $TOTAL_STEPS "$MSG_PHASE_2"
 
@@ -496,8 +600,8 @@ LSFG_URLS=()
 if LSFG_HTML="$(curl -fsSL --retry 3 --retry-delay 2 -A "$LSFG_UA" -e "$LSFG_BASE/" "$LSFG_BASE/" 2>/dev/null)"; then
     mapfile -t LSFG_CANDIDATES < <(
         {
-            printf '%s' "$LSFG_HTML" | grep -oiE '(href|src)=["'\''][^"'\'']*lsfg-vk-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9._-]+)?\.tar\.xz["'\'']' | sed -E 's/^(href|src)=["'\'']//I; s/["'\'']$//'
-            printf '%s' "$LSFG_HTML" | grep -oiE '(https?://[^"'\'' <>[:space:]]+/)?lsfg-vk-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9._-]+)?\.tar\.xz'
+            { grep -oiE '(href|src)=["'\''][^"'\'']*lsfg-vk-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9._-]+)?\.tar\.xz["'\'']' <<< "$LSFG_HTML" | sed -E 's/^(href|src)=["'\'']//I; s/["'\'']$//'; } || true
+            grep -oiE '(https?://[^"'\'' <>[:space:]]+/)?lsfg-vk-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9._-]+)?\.tar\.xz' <<< "$LSFG_HTML" || true
         } | awk 'NF && !seen[$0]++' | sort -rV || true
     )
     for c in "${LSFG_CANDIDATES[@]}"; do
@@ -516,8 +620,8 @@ for LSFG_URL in "${LSFG_URLS[@]}"; do
     rm -f "$LSFG_TMP/lsfg-vk.tar.xz"
     if curl -fsSL --retry 3 --retry-delay 2 -A "$LSFG_UA" -e "$LSFG_BASE/" -o "$LSFG_TMP/lsfg-vk.tar.xz" "$LSFG_URL" 2>/dev/null; then
         if LSFG_TAR_LIST="$(tar -tf "$LSFG_TMP/lsfg-vk.tar.xz" 2>/dev/null)"; then
-            if printf '%s\n' "$LSFG_TAR_LIST" | grep -qE '(^|/)bin/lsfg-vk-(ui|cli)$'; then
-                BIN_LINE="$(printf '%s\n' "$LSFG_TAR_LIST" | grep -E '(^|/)bin/lsfg-vk-(ui|cli)$' | head -n 1)"
+            if grep -qE '(^|/)bin/lsfg-vk-(ui|cli)$' <<< "$LSFG_TAR_LIST"; then
+                BIN_LINE="$(grep -m1 -E '(^|/)bin/lsfg-vk-(ui|cli)$' <<< "$LSFG_TAR_LIST")"
                 PREFIX="${BIN_LINE%bin/lsfg-vk-*}"
                 PREFIX="${PREFIX#./}"
                 STRIP=0
@@ -570,13 +674,28 @@ if [[ "$GPU_TYPE" == *nvidia* ]]; then
 fi
 
 if [ -f /etc/default/grub ]; then
+    CUR_CMDLINE=""
     if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
-        sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"|" /etc/default/grub
+        CUR_CMDLINE="$(sed -n -E "s/^GRUB_CMDLINE_LINUX_DEFAULT=[\"']?([^\"']*)[\"']?.*/\1/p" /etc/default/grub | tail -n 1)"
+    fi
+    NEW_CMDLINE="$CUR_CMDLINE"
+    for arg in $CMDLINE; do
+        KEPT_CMDLINE=""
+        for word in $NEW_CMDLINE; do
+            if [ "${word%%=*}" != "${arg%%=*}" ]; then
+                KEPT_CMDLINE="${KEPT_CMDLINE:+$KEPT_CMDLINE }$word"
+            fi
+        done
+        NEW_CMDLINE="${KEPT_CMDLINE:+$KEPT_CMDLINE }$arg"
+    done
+
+    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+        sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW_CMDLINE\"|" /etc/default/grub
     else
-        echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$CMDLINE\"" | sudo tee -a /etc/default/grub > /dev/null
+        echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW_CMDLINE\"" | sudo tee -a /etc/default/grub > /dev/null
     fi
 
-    for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden" "GRUB_GFXPAYLOAD_LINUX=keep"; do
+    for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden" "GRUB_GFXPAYLOAD_LINUX=keep" "GRUB_DISABLE_OS_PROBER=false"; do
         key="${kv%%=*}"
         if grep -qE "^#?${key}=" /etc/default/grub; then
             sudo sed -i -E "s|^#?${key}=.*|${kv}|" /etc/default/grub
@@ -590,6 +709,8 @@ if [ -f /etc/default/grub ]; then
     if command -v grub-mkconfig &>/dev/null; then
         sudo grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null || true
     fi
+else
+    _pick_msg "Brak /etc/default/grub – pominięto argumenty jądra: $CMDLINE" "No /etc/default/grub - skipped kernel arguments: $CMDLINE"
 fi
 
 show_progress 10 $TOTAL_STEPS "$MSG_PHASE_3"
@@ -658,13 +779,19 @@ fi
 
 if [[ "$LIBVIRT_NET" == "192.168.150.0/24" ]]; then
     LIBVIRT_NET_XML="$(mktemp)"
+    LIBVIRT_NET_BAK="$(mktemp)"
     if sudo virsh net-dumpxml default --inactive 2>/dev/null > "$LIBVIRT_NET_XML" && grep -q '192\.168\.122\.' "$LIBVIRT_NET_XML"; then
+        cp -f "$LIBVIRT_NET_XML" "$LIBVIRT_NET_BAK"
         sed -i 's/192\.168\.122\./192.168.150./g' "$LIBVIRT_NET_XML"
+        LIBVIRT_NET_RESTORE=1
         sudo virsh net-destroy default 2>/dev/null || true
         sudo virsh net-undefine default 2>/dev/null || true
-        sudo virsh net-define "$LIBVIRT_NET_XML" || true
+        if ! sudo virsh net-define "$LIBVIRT_NET_XML"; then
+            sudo virsh net-define "$LIBVIRT_NET_BAK" || true
+        fi
+        LIBVIRT_NET_RESTORE=0
     fi
-    rm -f "$LIBVIRT_NET_XML"
+    rm -f "$LIBVIRT_NET_XML" "$LIBVIRT_NET_BAK"
 fi
 
 sudo virsh net-start default 2>/dev/null || true
@@ -672,16 +799,29 @@ sudo virsh net-autostart default 2>/dev/null || true
 
 if command -v ufw &>/dev/null; then
     [[ -f /etc/default/ufw ]] && sudo sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw || true
-    sudo ufw --force reset || true
-    sudo ufw default deny incoming || true
-    sudo ufw default allow outgoing || true
+    UFW_STATUS="$(sudo ufw status 2>/dev/null || true)"
+    UFW_WAS_ACTIVE=0
+    if grep -q '^Status: active' <<< "$UFW_STATUS"; then
+        UFW_WAS_ACTIVE=1
+    fi
+    if [ "$UFW_WAS_ACTIVE" -eq 0 ]; then
+        sudo ufw default deny incoming || true
+        sudo ufw default allow outgoing || true
+    fi
     sudo ufw allow in  on virbr0 || true
     sudo ufw allow out on virbr0 || true
     sudo ufw allow from "$LIBVIRT_NET" || true
     if pkg_installed openssh || [[ -x /usr/bin/sshd ]] || [[ -x /usr/sbin/sshd ]] || [[ -e /var/service/sshd ]]; then
-        sudo ufw allow ssh || true
+        SSHD_CFG="$(sudo sshd -T 2>/dev/null || true)"
+        SSH_PORT="$(awk '$1 == "port" {print $2; exit}' <<< "$SSHD_CFG")"
+        [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || SSH_PORT=22
+        sudo ufw allow "$SSH_PORT/tcp" || true
     fi
-    sudo ufw --force enable || true
+    if [ "$UFW_WAS_ACTIVE" -eq 1 ]; then
+        sudo ufw reload || true
+    else
+        sudo ufw --force enable || true
+    fi
     enable_service ufw
 fi
 
@@ -747,10 +887,10 @@ if command -v zsh &>/dev/null; then
         sed -i 's|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' ~/.zshrc
         sed -i 's/^plugins=(.*/plugins=(git sudo)/' ~/.zshrc
 
-        SHELL_LOCALE="${LANG:-${LC_ALL:-${LC_MESSAGES:-en_US.UTF-8}}}"
+        SHELL_LOCALE="${LC_ALL:-${LC_MESSAGES:-${LANG:-en_US.UTF-8}}}"
         if command -v locale &>/dev/null; then
             AVAILABLE_LOCALES="$(locale -a 2>/dev/null || true)"
-            if ! echo "$AVAILABLE_LOCALES" | grep -qiF "$SHELL_LOCALE" && ! echo "$AVAILABLE_LOCALES" | grep -qiF "$(echo "$SHELL_LOCALE" | sed 's/UTF-8/utf8/')"; then
+            if ! grep -qiF "$SHELL_LOCALE" <<< "$AVAILABLE_LOCALES" && ! grep -qiF "${SHELL_LOCALE//UTF-8/utf8}" <<< "$AVAILABLE_LOCALES"; then
                 SHELL_LOCALE="en_US.UTF-8"
             fi
         fi
@@ -803,7 +943,8 @@ else
     RESTART_PROMPT="Do you want to restart the system now? [Y/N]: "
 fi
 echo -en "${INFO}==> ${RESTART_PROMPT}${NC}" >&3
-read -r RESTART_CHOICE < /dev/tty
+RESTART_CHOICE=""
+read -r RESTART_CHOICE < /dev/tty || RESTART_CHOICE=""
 case "$RESTART_CHOICE" in
     [YyTt]*)
         DO_REBOOT=1
