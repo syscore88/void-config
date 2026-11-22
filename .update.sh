@@ -373,17 +373,13 @@ STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 # ---------------------------------------------------------------
 # PHASE: RESTART CHECK
 # ---------------------------------------------------------------
-if command -v needrestart &> /dev/null; then
-    NEEDRESTART_OUT=$(sudo needrestart -b 2>/dev/null)
-    if echo "$NEEDRESTART_OUT" | grep -qE "NEEDRESTART-KSTA: [23]"; then
-        RESTART_NEEDED=true
-    fi
-else
-    RUNNING_KERNEL="$(uname -r)"
-    LATEST_KERNEL=$(for f in /boot/vmlinuz-*; do [ -e "$f" ] && printf '%s\n' "${f##*/vmlinuz-}"; done | sort -V | tail -n1)
-    if [ ! -d "/usr/lib/modules/$RUNNING_KERNEL" ] || { [ -n "$LATEST_KERNEL" ] && [ "$LATEST_KERNEL" != "$RUNNING_KERNEL" ]; }; then
-        RESTART_NEEDED=true
-    fi
+RUNNING_KERNEL="$(uname -r)"
+LATEST_KERNEL=$(for f in /boot/vmlinuz-*; do [ -e "$f" ] && printf '%s\n' "${f##*/vmlinuz-}"; done | sort -V | tail -n1)
+if [ ! -d "/usr/lib/modules/$RUNNING_KERNEL" ] || { [ -n "$LATEST_KERNEL" ] && [ "$LATEST_KERNEL" != "$RUNNING_KERNEL" ]; }; then
+    RESTART_NEEDED=true
+fi
+if [ -n "$PKG_VERSIONS" ] && grep -qE '^(glibc|musl|dbus|elogind|eudev|runit|amd-ucode|intel-ucode)-[0-9]' <<< "$PKG_VERSIONS"; then
+    RESTART_NEEDED=true
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
