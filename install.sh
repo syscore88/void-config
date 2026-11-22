@@ -37,7 +37,6 @@ LIBVIRT_NET_XML=""
 LIBVIRT_NET_BAK=""
 LIBVIRT_NET_RESTORE=0
 OMZ_INSTALLER=""
-DATA_BACKUP_DIR="$HOME/.installer-backup-$(date +%Y%m%d_%H%M%S)"
 
 exec 3>&1
 exec >>"$TMP_LOG" 2>&1
@@ -159,9 +158,9 @@ TOTAL_STEPS=12
 
 if [[ "$EUID" -eq 0 ]]; then
     if [[ "$SCRIPT_LANG" == "pl" ]]; then
-        echo -e "${ERR}[X] Nie uruchamiaj skryptu jako root. Uruchom jako zwykły użytkownik z sudo.${NC}" >&3
+        echo -e "${ERR}[X] Nie uruchamiaj skryptu jako root. Uruchom jako zwykły użytkownik z sudo.${NC}" >&3 2>/dev/null || true
     else
-        echo -e "${ERR}[X] Do not run this script as root. Run as a normal user with sudo.${NC}" >&3
+        echo -e "${ERR}[X] Do not run this script as root. Run as a normal user with sudo.${NC}" >&3 2>/dev/null || true
     fi
     exit 1
 fi
@@ -169,13 +168,13 @@ fi
 CURRENT_USER=$(whoami)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-printf '\033[?7h\n' >&3
+printf '\033[?7h\n' >&3 2>/dev/null || true
 
 if ! command -v sudo >/dev/null 2>&1 || ! command -v visudo >/dev/null 2>&1; then
     if [[ "$SCRIPT_LANG" == "pl" ]]; then
-        echo -e "${ERR}[X] Brak sudo lub visudo – przerywam.${NC}" >&3
+        echo -e "${ERR}[X] Brak sudo lub visudo – przerywam.${NC}" >&3 2>/dev/null || true
     else
-        echo -e "${ERR}[X] sudo or visudo not found - aborting.${NC}" >&3
+        echo -e "${ERR}[X] sudo or visudo not found - aborting.${NC}" >&3 2>/dev/null || true
     fi
     exit 1
 fi
@@ -201,15 +200,15 @@ if sudo visudo -cf "$SUDOERS_TMP" &>/dev/null; then
 else
     rm -f "$SUDOERS_TMP"
     if [[ "$SCRIPT_LANG" == "pl" ]]; then
-        echo -e "${ERR}[X] Nieprawidłowa składnia pliku sudoers – przerywam.${NC}" >&3
+        echo -e "${ERR}[X] Nieprawidłowa składnia pliku sudoers – przerywam.${NC}" >&3 2>/dev/null || true
     else
-        echo -e "${ERR}[X] Invalid sudoers rule syntax - aborting.${NC}" >&3
+        echo -e "${ERR}[X] Invalid sudoers rule syntax - aborting.${NC}" >&3 2>/dev/null || true
     fi
     exit 1
 fi
 rm -f "$SUDOERS_TMP"
 
-printf '\033[?7l' >&3
+printf '\033[?7l' >&3 2>/dev/null || true
 
 # =============================================================
 #  ETAP 1/4: PRZYGOTOWYWANIE
@@ -268,35 +267,6 @@ enable_service() {
 
 dconf_load() {
     dbus-run-session -- dconf load "$1" || true
-}
-
-backup_move() {
-    local p rel
-    for p in "$@"; do
-        if [ -e "$p" ]; then
-            rel="${p#"$HOME"/}"
-            mkdir -p "$DATA_BACKUP_DIR/$(dirname "$rel")"
-            mv -f "$p" "$DATA_BACKUP_DIR/$rel" || true
-        fi
-    done
-}
-
-move_app_data() {
-    local pkgs="$1" p pat base
-    shift
-    for p in $pkgs; do
-        if pkg_installed "$p"; then return 0; fi
-    done
-    for pat in "$@"; do
-        for base in "$HOME/.local/share" "$HOME/.config"; do
-            for p in "$base"/$pat; do
-                backup_move "$p"
-            done
-        done
-        for p in "$HOME/.cache"/$pat; do
-            if [ -e "$p" ]; then rm -rf "$p"; fi
-        done
-    done
 }
 
 sudo usermod -aG wheel,audio,video,input,bluetooth "$CURRENT_USER" 2>/dev/null || sudo usermod -aG wheel,audio,video,input "$CURRENT_USER"
@@ -371,6 +341,20 @@ PROTECTED_PKGS=(
     plasma-desktop plasma-workspace gnome-shell gnome-session gdm sddm
     plasma-login-manager NetworkManager sudo cosmic-session
 )
+TO_REMOVE_RE="^($(IFS='|'; echo "${TO_REMOVE[*]}"))\$"
+for meta in gnome gnome-apps gnome-core kde5 kde5-baseapps kde-plasma xfce4 mate cinnamon; do
+    pkg_installed "$meta" || continue
+    mapfile -t META_DEPS < <(
+        xbps-query -x "$meta" 2>/dev/null \
+        | sed -E 's/[<>=].*//' \
+        | grep -Ev "$TO_REMOVE_RE" \
+        | sort -u || true
+    )
+    for dep in "${META_DEPS[@]}"; do
+        pkg_installed "$dep" && sudo xbps-pkgdb -m manual "$dep" || true
+    done
+    sudo xbps-remove -y "$meta" 2>/dev/null || true
+done
 for pkg in "${PROTECTED_PKGS[@]}"; do
     if pkg_installed "$pkg"; then
         sudo xbps-pkgdb -m manual "$pkg" || true
@@ -413,10 +397,6 @@ fi
 
 if pkg_installed plasma-desktop || pkg_installed plasma-workspace; then
     mkdir -p ~/.config
-    if [ -f ~/.config/kwalletrc ]; then
-        mkdir -p "$DATA_BACKUP_DIR/.config"
-        cp -a ~/.config/kwalletrc "$DATA_BACKUP_DIR/.config/kwalletrc" || true
-    fi
     cat > ~/.config/kwalletrc << 'KWALLET_EOF'
 [Wallet]
 Close When Idle=false
@@ -436,18 +416,13 @@ apiEnabled=false
 KWALLET_EOF
 fi
 
-move_app_data akonadi 'akonadi*'
-move_app_data kmail 'kmail*' kmail2 local-mail emailidentities mailtransports
-move_app_data kaddressbook 'kaddressbook*' contacts
-move_app_data korganizer 'korganizer*'
-move_app_data akregator 'akregator*'
-move_app_data kontact 'kontact*'
-move_app_data konqueror 'konqueror*'
-for name in gnome-software epiphany decibels rhythmbox showtime parole evolution gnome-calendar gnome-clocks gnome-music gnome-contacts gnome-maps gnome-weather yelp elisa cosmic-store cosmic-player pragha totem exaile mpv juk; do
-    move_app_data "$name" "$name"
-done
-move_app_data dragon dragonplayer
-move_app_data "transmission-gtk transmission-qt" transmission
+rm -rf ~/.local/share/akonadi ~/.local/share/kmail2 ~/.local/share/local-mail ~/.local/share/contacts ~/.local/share/korganizer ~/.local/share/akregator ~/.local/share/kontact ~/.local/share/konqueror
+rm -rf ~/.config/akonadi* ~/.config/kmail* ~/.config/kontact* ~/.config/korganizer* ~/.config/kaddressbook* ~/.config/akregator* ~/.config/emailidentities ~/.config/mailtransports
+rm -rf ~/.cache/akonadi* ~/.cache/kmail* ~/.cache/kontact* ~/.cache/korganizer* ~/.cache/kaddressbook* ~/.cache/akregator* ~/.cache/konqueror*
+rm -rf ~/.local/share/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,evolution,gnome-calendar,gnome-clocks,gnome-music,gnome-user-docs,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
+rm -rf ~/.config/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,evolution,gnome-calendar,gnome-clocks,gnome-music,gnome-user-docs,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
+rm -rf ~/.cache/{gnome-software,epiphany,decibels,rhythmbox,showtime,parole,evolution,gnome-calendar,gnome-clocks,gnome-music,gnome-user-docs,gnome-contacts,gnome-maps,gnome-weather,yelp,dragonplayer,elisa,cosmic-store,cosmic-player,pragha,transmission,totem,exaile,mpv,juk}
+command -v dconf &>/dev/null && dbus-run-session -- dconf reset -f /org/gnome/evolution/ || true
 
 show_progress 2 $TOTAL_STEPS "$MSG_PHASE_1"
 
@@ -540,7 +515,7 @@ for f in /etc/xdg/autostart/gcdemu.desktop /etc/xdg/autostart/cdemu.desktop /usr
     if [[ -f "$f" ]]; then
         cp -f "$f" "$HOME/.config/autostart/$(basename "$f")"
         if grep -q '^Hidden=' "$HOME/.config/autostart/$(basename "$f")"; then
-            sed -i 's/^Hidden=.*/Hidden=true/' "$HOME/.config/autostart/$(basename "$f")"
+            sed -i 's/^Hidden=.*/Hidden=true/' "$HOME/.config/autostart/$(basename "$f")" || true
         else
             echo "Hidden=true" >> "$HOME/.config/autostart/$(basename "$f")"
         fi
@@ -676,7 +651,7 @@ fi
 if [ -f /etc/default/grub ]; then
     CUR_CMDLINE=""
     if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
-        CUR_CMDLINE="$(sed -n -E "s/^GRUB_CMDLINE_LINUX_DEFAULT=[\"']?([^\"']*)[\"']?.*/\1/p" /etc/default/grub | tail -n 1)"
+        CUR_CMDLINE="$(awk -F= '/^GRUB_CMDLINE_LINUX_DEFAULT=/{v=substr($0, index($0,"=")+1); gsub(/^["\047]|["\047]$/, "", v); last=v} END{print last}' /etc/default/grub 2>/dev/null || true)"
     fi
     NEW_CMDLINE="$CUR_CMDLINE"
     for arg in $CMDLINE; do
@@ -690,7 +665,7 @@ if [ -f /etc/default/grub ]; then
     done
 
     if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
-        sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW_CMDLINE\"|" /etc/default/grub
+        sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW_CMDLINE\"|" /etc/default/grub || true
     else
         echo "GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW_CMDLINE\"" | sudo tee -a /etc/default/grub > /dev/null
     fi
@@ -698,7 +673,7 @@ if [ -f /etc/default/grub ]; then
     for kv in "GRUB_TIMEOUT=0" "GRUB_TIMEOUT_STYLE=hidden" "GRUB_GFXPAYLOAD_LINUX=keep" "GRUB_DISABLE_OS_PROBER=false"; do
         key="${kv%%=*}"
         if grep -qE "^#?${key}=" /etc/default/grub; then
-            sudo sed -i -E "s|^#?${key}=.*|${kv}|" /etc/default/grub
+            sudo sed -i -E "s|^#?${key}=.*|${kv}|" /etc/default/grub || true
         else
             echo "$kv" | sudo tee -a /etc/default/grub > /dev/null
         fi
@@ -743,7 +718,7 @@ if [ -d /etc/sv/zramen ]; then
     printf "export ZRAM_COMP_ALGORITHM='zstd'\nexport ZRAM_SIZE=50\nexport ZRAM_PRIORITY=32767\n" | sudo tee /etc/sv/zramen/conf > /dev/null
     sudo mkdir -p /etc/sysctl.d
     printf "vm.swappiness=180\nvm.page-cluster=0\n" | sudo tee /etc/sysctl.d/99-zram.conf > /dev/null
-    grep -q '^exec >/dev/null 2>&1' /etc/sv/zramen/run || sudo sed -i '1a exec >/dev/null 2>\&1' /etc/sv/zramen/run
+    grep -q '^exec >/dev/null 2>&1' /etc/sv/zramen/run || sudo sed -i '1a exec >/dev/null 2>\&1' /etc/sv/zramen/run || true
     sudo ln -sf /etc/sv/zramen /var/service/
 fi
 
@@ -782,7 +757,7 @@ if [[ "$LIBVIRT_NET" == "192.168.150.0/24" ]]; then
     LIBVIRT_NET_BAK="$(mktemp)"
     if sudo virsh net-dumpxml default --inactive 2>/dev/null > "$LIBVIRT_NET_XML" && grep -q '192\.168\.122\.' "$LIBVIRT_NET_XML"; then
         cp -f "$LIBVIRT_NET_XML" "$LIBVIRT_NET_BAK"
-        sed -i 's/192\.168\.122\./192.168.150./g' "$LIBVIRT_NET_XML"
+        sed -i 's/192\.168\.122\./192.168.150./g' "$LIBVIRT_NET_XML" || true
         LIBVIRT_NET_RESTORE=1
         sudo virsh net-destroy default 2>/dev/null || true
         sudo virsh net-undefine default 2>/dev/null || true
@@ -884,8 +859,8 @@ if command -v zsh &>/dev/null; then
     fi
 
     if [ -f ~/.zshrc ]; then
-        sed -i 's|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' ~/.zshrc
-        sed -i 's/^plugins=(.*/plugins=(git sudo)/' ~/.zshrc
+        sed -i 's|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' ~/.zshrc || true
+        sed -i 's/^plugins=(.*/plugins=(git sudo)/' ~/.zshrc || true
 
         SHELL_LOCALE="${LC_ALL:-${LC_MESSAGES:-${LANG:-en_US.UTF-8}}}"
         if command -v locale &>/dev/null; then
@@ -922,16 +897,16 @@ enable_service NetworkManager
 #  ETAP 4/4: CZYSZCZENIE
 # =============================================================
 show_progress 12 $TOTAL_STEPS "$MSG_PHASE_4"
-printf '\n\n' >&3
+printf '\n\n' >&3 2>/dev/null || true
 
 if [ "${#FAILED_PACKAGES[@]}" -gt 0 ]; then
     log_warn "Nie udało się zainstalować: ${FAILED_PACKAGES[*]}" "Failed to install: ${FAILED_PACKAGES[*]}"
 fi
 
 if [[ "$SCRIPT_LANG" == "pl" ]]; then
-    echo -e "${SUCCESS}[OK] KONFIGURACJA ZAKOŃCZONA SUKCESEM!${NC}" >&3
+    echo -e "${SUCCESS}[OK] KONFIGURACJA ZAKOŃCZONA SUKCESEM!${NC}" >&3 2>/dev/null || true
 else
-    echo -e "${SUCCESS}[OK] CONFIGURATION COMPLETED SUCCESSFULLY!${NC}" >&3
+    echo -e "${SUCCESS}[OK] CONFIGURATION COMPLETED SUCCESSFULLY!${NC}" >&3 2>/dev/null || true
 fi
 
 # =============================================================
@@ -942,7 +917,7 @@ if [[ "$SCRIPT_LANG" == "pl" ]]; then
 else
     RESTART_PROMPT="Do you want to restart the system now? [Y/N]: "
 fi
-echo -en "${INFO}==> ${RESTART_PROMPT}${NC}" >&3
+echo -en "${INFO}==> ${RESTART_PROMPT}${NC}" >&3 2>/dev/null || true
 RESTART_CHOICE=""
 read -r RESTART_CHOICE < /dev/tty || RESTART_CHOICE=""
 case "$RESTART_CHOICE" in
