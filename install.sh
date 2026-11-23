@@ -443,7 +443,7 @@ SYSTEM_PKGS=(
     elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pulseaudio-utils pavucontrol
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
-    curl wget git xtools vkpurge base-devel xdg-utils xdg-user-dirs flatpak
+    curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1
