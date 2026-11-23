@@ -31,8 +31,8 @@ PRIVS_GRANTED=0
 
 remove_temp_privs() {
     [[ "$PRIVS_GRANTED" -eq 1 ]] || return 0
-    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null || true
     PRIVS_GRANTED=0
+    sudo -n rm -f /etc/sudoers.d/99-temp-update </dev/null 3>&- 2>/dev/null || true
 }
 
 cleanup_on_exit() {
@@ -51,6 +51,7 @@ cleanup_on_exit() {
         rm -f "$LOG_FILE"
     fi
     rm -f "$TMP_LOG"
+    exec 3>&- 2>/dev/null || true
 }
 trap cleanup_on_exit EXIT
 
@@ -134,8 +135,8 @@ fi
 CURRENT_USER=$(whoami)
 
 cleanup_stale_privs() {
-    sudo -n true 2>/dev/null || return 0
-    sudo -n rm -f /etc/sudoers.d/99-temp-update 2>/dev/null || true
+    sudo -n true </dev/null 3>&- 2>/dev/null || return 0
+    sudo -n rm -f /etc/sudoers.d/99-temp-update </dev/null 3>&- 2>/dev/null || true
 }
 cleanup_stale_privs
 
@@ -152,13 +153,13 @@ echo "" >&3
 
 SUDOERS_TMP="$(mktemp)"
 printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$CURRENT_USER" > "$SUDOERS_TMP"
-if printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' visudo -cf "$SUDOERS_TMP" &>/dev/null \
-   && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -d -m 0750 -o root -g root /etc/sudoers.d &>/dev/null \
-   && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/99-temp-update &>/dev/null; then
+if printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' visudo -cf "$SUDOERS_TMP" 3>&- &>/dev/null \
+   && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -d -m 0750 -o root -g root /etc/sudoers.d 3>&- &>/dev/null \
+   && printf '%s\n' "${SUDO_PASSWORD:-}" | sudo -S -p '' install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/99-temp-update 3>&- &>/dev/null; then
     PRIVS_GRANTED=1
     rm -f "$SUDOERS_TMP"
     unset SUDO_PASSWORD
-    if ! sudo -n true 2>/dev/null; then
+    if ! sudo -n true </dev/null 3>&- 2>/dev/null; then
         if [[ "$SCRIPT_LANG" == "pl" ]]; then
             echo -e "${WARN}[!] Reguła NOPASSWD zainstalowana, ale sudo nadal prosi o hasło - sprawdź 'sudo -l' (możliwa inna reguła w /etc/sudoers nadpisująca wpis z sudoers.d).${NC}" >&3
         else
@@ -176,7 +177,7 @@ else
     exit 1
 fi
 
-if ! sudo -n true 2>/dev/null; then
+if ! sudo -n true </dev/null 3>&- 2>/dev/null; then
     if [[ "$SCRIPT_LANG" == "pl" ]]; then
         echo -e "${ERR}[X] Nie udało się uzyskać uprawnień bez hasła – przerywam.${NC}" >&3
     else
@@ -193,7 +194,7 @@ show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 # ---------------------------------------------------------------
 # PHASE: UPDATE
 # ---------------------------------------------------------------
-sudo env LC_ALL=C xbps-install -Syu xbps
+sudo env LC_ALL=C xbps-install -Syu xbps </dev/null 3>&-
 XBPS_RC=$?
 if [ "$XBPS_RC" -ne 0 ]; then
     printf "\r\033[K" >&3
@@ -202,9 +203,9 @@ if [ "$XBPS_RC" -ne 0 ]; then
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
-PKG_VERSIONS=$(sudo env LC_ALL=C xbps-install -un 2>/dev/null | awk 'NF >= 2 { print $1 }' | sort -u)
+PKG_VERSIONS=$(sudo env LC_ALL=C xbps-install -un </dev/null 3>&- 2>/dev/null | awk 'NF >= 2 { print $1 }' | sort -u)
 
-XBPS_OUTPUT=$(sudo env LC_ALL=C xbps-install -yu 2>&1)
+XBPS_OUTPUT=$(sudo env LC_ALL=C xbps-install -yu </dev/null 3>&- 2>&1)
 XBPS_RC=$?
 echo "$XBPS_OUTPUT"
 if [ "$XBPS_RC" -ne 0 ]; then
@@ -223,18 +224,18 @@ fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 if command -v gext &> /dev/null; then
-    gext update
+    gext update </dev/null 3>&-
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 if command -v cinnamon-spice-updater &> /dev/null; then
-    cinnamon-spice-updater --update-all
+    cinnamon-spice-updater --update-all </dev/null 3>&-
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_UPDATE"
 
 if command -v fwupdmgr &> /dev/null; then
-    sudo env LC_ALL=C fwupdmgr refresh --force
-    FWUPD_OUT=$(sudo env LC_ALL=C fwupdmgr update -y --no-reboot-check 2>&1)
+    sudo env LC_ALL=C fwupdmgr refresh --force </dev/null 3>&-
+    FWUPD_OUT=$(sudo env LC_ALL=C fwupdmgr update -y --no-reboot-check </dev/null 3>&- 2>&1)
     echo "$FWUPD_OUT"
     if echo "$FWUPD_OUT" | grep -qiE "restart|reboot"; then
         RESTART_NEEDED=true
@@ -245,31 +246,35 @@ STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 # ---------------------------------------------------------------
 # PHASE: SYSTEM CLEANUP (SUDO)
 # ---------------------------------------------------------------
-sudo find /var/cache/xbps -type f -name "*.part" -delete 2>/dev/null
+sudo find /var/cache/xbps -type f -name "*.part" -delete </dev/null 3>&- 2>/dev/null
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-sudo env LC_ALL=C xbps-remove -oy
-if command -v vkpurge &> /dev/null; then
-    mapfile -t OLD_KERNELS < <(vkpurge list 2>/dev/null | sort -V | head -n -1)
-    if (( ${#OLD_KERNELS[@]} > 0 )); then
-        sudo vkpurge rm "${OLD_KERNELS[@]}"
+{
+    sudo env LC_ALL=C xbps-remove -oy
+    if command -v vkpurge &> /dev/null; then
+        mapfile -t OLD_KERNELS < <(vkpurge list 2>/dev/null | sort -V | head -n -1)
+        if (( ${#OLD_KERNELS[@]} > 0 )); then
+            sudo vkpurge rm "${OLD_KERNELS[@]}"
+        fi
     fi
-fi
+} </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-sudo find /var/cache/xbps -maxdepth 1 -type f -name '*.xbps' 2>/dev/null \
-    | awk -F/ '{ f = $NF; n = f; sub(/-[^-]+_[0-9]+\.[^.]+\.xbps$/, "", n); a = f; sub(/\.xbps$/, "", a); sub(/^.*\./, "", a); printf "%s.%s\t%s\t%s\n", n, a, f, $0 }' \
-    | env LC_ALL=C sort -t$'\t' -k1,1 -k2,2Vr \
-    | awk -F'\t' '$1 == prev { n++ } $1 != prev { n = 1; prev = $1 } n > 2 { print $3; print $3 ".sig"; print $3 ".sig2" }' \
-    | xargs -r -d '\n' sudo rm -f --
+{
+    sudo find /var/cache/xbps -maxdepth 1 -type f -name '*.xbps' 2>/dev/null \
+        | awk -F/ '{ f = $NF; n = f; sub(/-[^-]+_[0-9]+\.[^.]+\.xbps$/, "", n); a = f; sub(/\.xbps$/, "", a); sub(/^.*\./, "", a); printf "%s.%s\t%s\t%s\n", n, a, f, $0 }' \
+        | env LC_ALL=C sort -t$'\t' -k1,1 -k2,2Vr \
+        | awk -F'\t' '$1 == prev { n++ } $1 != prev { n = 1; prev = $1 } n > 2 { print $3; print $3 ".sig"; print $3 ".sig2" }' \
+        | xargs -r -d '\n' sudo rm -f --
+} </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 if command -v flatpak &> /dev/null; then
-    FLATPAK_BEFORE=$(flatpak list --system --app --columns=application,version 2>/dev/null)
+    FLATPAK_BEFORE=$(flatpak list --system --app --columns=application,version </dev/null 3>&- 2>/dev/null)
 
-    sudo flatpak update --system -y
+    sudo flatpak update --system -y </dev/null 3>&-
 
-    FLATPAK_AFTER=$(flatpak list --system --app --columns=application,version 2>/dev/null)
+    FLATPAK_AFTER=$(flatpak list --system --app --columns=application,version </dev/null 3>&- 2>/dev/null)
 
     FLATPAK_PKGS=$(LC_ALL=C join -t$'\t' -j1 \
         <(echo "$FLATPAK_BEFORE" | LC_ALL=C sort -t$'\t' -k1,1) \
@@ -277,47 +282,53 @@ if command -v flatpak &> /dev/null; then
         | awk -F'\t' '$2 != $3 { printf "%s: %s → %s\n", $1, ($2==""?"?":$2), ($3==""?"?":$3) }')
     print_pkg_list "$MSG_FLATPAK_UPDATED" "$FLATPAK_PKGS"
 
-    sudo flatpak uninstall --unused --system --delete-data -y
-    sudo flatpak repair --system
+    {
+        sudo flatpak uninstall --unused --system --delete-data -y
+        sudo flatpak repair --system
 
-    USED_REMOTES=$(flatpak list --system --columns=origin 2>/dev/null | sort -u)
-    ALL_REMOTES=$(flatpak remotes --system --columns=name 2>/dev/null)
-    while IFS= read -r remote; do
-        if [ -n "$remote" ] && [ "$remote" != "flathub" ] && ! echo "$USED_REMOTES" | grep -qxF -- "$remote"; then
-            sudo flatpak remote-delete --system --force "$remote" 2>/dev/null
-        fi
-    done <<< "$ALL_REMOTES"
+        USED_REMOTES=$(flatpak list --system --columns=origin 2>/dev/null | sort -u)
+        ALL_REMOTES=$(flatpak remotes --system --columns=name 2>/dev/null)
+        while IFS= read -r remote; do
+            if [ -n "$remote" ] && [ "$remote" != "flathub" ] && ! echo "$USED_REMOTES" | grep -qxF -- "$remote"; then
+                sudo flatpak remote-delete --system --force "$remote" </dev/null 2>/dev/null
+            fi
+        done <<< "$ALL_REMOTES"
 
-    sudo rm -rf /var/tmp/flatpak-cache-* 2>/dev/null
-    sudo rm -rf /var/lib/flatpak/repo/tmp/* 2>/dev/null
-    sudo find /var/lib/flatpak -name "*.tmp" -delete 2>/dev/null
-    sudo rm -f /var/lib/flatpak/history 2>/dev/null
+        sudo rm -rf /var/tmp/flatpak-cache-* 2>/dev/null
+        sudo rm -rf /var/lib/flatpak/repo/tmp/* 2>/dev/null
+        sudo find /var/lib/flatpak -name "*.tmp" -delete 2>/dev/null
+        sudo rm -f /var/lib/flatpak/history 2>/dev/null
+    } </dev/null 3>&-
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-sudo find /var/log -type f -name "*.gz" -mtime +7 -exec rm -f {} +
-sudo find /var/log -type f -name "*.1" -exec rm -f {} +
+{
+    sudo find /var/log -type f -name "*.gz" -mtime +7 -exec rm -f {} +
+    sudo find /var/log -type f -name "*.1" -exec rm -f {} +
+} </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-sudo find /tmp -xdev -type f -atime +3 \
-    ! -path "/tmp/systemd-private-*" \
-    ! -path "/tmp/.*" \
-    -exec rm -f {} + 2>/dev/null
-sudo find /var/tmp -xdev -type f -atime +3 \
-    ! -path "/var/tmp/systemd-private-*" \
-    ! -path "/var/tmp/.*" \
-    -exec rm -f {} + 2>/dev/null
+{
+    sudo find /tmp -xdev -type f -atime +3 \
+        ! -path "/tmp/systemd-private-*" \
+        ! -path "/tmp/.*" \
+        -exec rm -f {} + 2>/dev/null
+    sudo find /var/tmp -xdev -type f -atime +3 \
+        ! -path "/var/tmp/systemd-private-*" \
+        ! -path "/var/tmp/.*" \
+        -exec rm -f {} + 2>/dev/null
+} </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 # ---------------------------------------------------------------
 # PHASE: USER CLEANUP (NO SUDO)
 # ---------------------------------------------------------------
 if command -v flatpak &> /dev/null; then
-    FLATPAK_BEFORE=$(flatpak list --user --app --columns=application,version 2>/dev/null)
+    FLATPAK_BEFORE=$(flatpak list --user --app --columns=application,version </dev/null 3>&- 2>/dev/null)
 
-    flatpak update --user -y
+    flatpak update --user -y </dev/null 3>&-
 
-    FLATPAK_AFTER=$(flatpak list --user --app --columns=application,version 2>/dev/null)
+    FLATPAK_AFTER=$(flatpak list --user --app --columns=application,version </dev/null 3>&- 2>/dev/null)
 
     FLATPAK_PKGS=$(LC_ALL=C join -t$'\t' -j1 \
         <(echo "$FLATPAK_BEFORE" | LC_ALL=C sort -t$'\t' -k1,1) \
@@ -325,22 +336,24 @@ if command -v flatpak &> /dev/null; then
         | awk -F'\t' '$2 != $3 { printf "%s: %s → %s\n", $1, ($2==""?"?":$2), ($3==""?"?":$3) }')
     print_pkg_list "$MSG_FLATPAK_UPDATED" "$FLATPAK_PKGS"
 
-    flatpak uninstall --unused --user --delete-data -y
-    flatpak repair --user
-    rm -rf ~/.local/share/flatpak/repo/tmp/* 2>/dev/null
-    rm -f ~/.local/share/flatpak/history 2>/dev/null
+    {
+        flatpak uninstall --unused --user --delete-data -y
+        flatpak repair --user
+        rm -rf ~/.local/share/flatpak/repo/tmp/* 2>/dev/null
+        rm -f ~/.local/share/flatpak/history 2>/dev/null
 
-    INSTALLED_FLATPAKS=$(flatpak list --app --columns=application 2>/dev/null)
-    if [ -n "$INSTALLED_FLATPAKS" ] && [ -d "$HOME/.var/app" ]; then
-        for app_dir in "$HOME/.var/app"/*; do
-            if [ -d "$app_dir" ]; then
-                app_id=$(basename "$app_dir")
-                if ! echo "$INSTALLED_FLATPAKS" | grep -qxF -- "$app_id"; then
-                    rm -rf "$app_dir"
+        INSTALLED_FLATPAKS=$(flatpak list --app --columns=application 2>/dev/null)
+        if [ -n "$INSTALLED_FLATPAKS" ] && [ -d "$HOME/.var/app" ]; then
+            for app_dir in "$HOME/.var/app"/*; do
+                if [ -d "$app_dir" ]; then
+                    app_id=$(basename "$app_dir")
+                    if ! echo "$INSTALLED_FLATPAKS" | grep -qxF -- "$app_id"; then
+                        rm -rf "$app_dir"
+                    fi
                 fi
-            fi
-        done
-    fi
+            done
+        fi
+    } </dev/null 3>&-
 fi
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
@@ -354,20 +367,22 @@ find ~/.cache -type f -atime +14 \
     ! -path "*/huggingface/*" \
     ! -path "*/torch/*" \
     ! -path "*/ms-playwright/*" \
-    -exec rm -f {} + 2>/dev/null
+    -exec rm -f {} + </dev/null 3>&- 2>/dev/null
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-find ~/.cache/thumbnails -type f -atime +7 -exec rm -f {} + 2>/dev/null
+find ~/.cache/thumbnails -type f -atime +7 -exec rm -f {} + </dev/null 3>&- 2>/dev/null
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-fc-cache -r
+fc-cache -r </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
-USER_ID=$(id -u)
-if command -v dconf &> /dev/null && [ -S "/run/user/$USER_ID/bus" ]; then
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" dconf reset /org/virt-manager/virt-manager/urls/isos 2>/dev/null
-fi
-rm -rf "$HOME/.cache/virt-manager" 2>/dev/null
+{
+    USER_ID=$(id -u)
+    if command -v dconf &> /dev/null && [ -S "/run/user/$USER_ID/bus" ]; then
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" dconf reset /org/virt-manager/virt-manager/urls/isos 2>/dev/null
+    fi
+    rm -rf "$HOME/.cache/virt-manager" 2>/dev/null
+} </dev/null 3>&-
 STEP=$((STEP+1)); show_progress $STEP $TOTAL_STEPS "$MSG_PHASE_CLEAN_SYS"
 
 # ---------------------------------------------------------------
@@ -397,8 +412,22 @@ else
     echo -e "${INFO}${MSG_NO_RESTART}${NC}" >&3
 fi
 echo -e "${WARN}${MSG_PRESS_ENTER}${NC}" >&3
-if [[ -r /dev/tty ]]; then
-    read -r < /dev/tty || true
+if exec 4</dev/tty 2>/dev/null; then
+    stty sane <&4 2>/dev/null || true
+    IFS= read -r _ <&4 || true
+    exec 4<&-
 else
-    read -r || true
+    stty sane 2>/dev/null || true
+    IFS= read -r _ || true
 fi
+
+PARENT_COMM="$(ps -o comm= -p "$PPID" 2>/dev/null || cat "/proc/$PPID/comm" 2>/dev/null || true)"
+PARENT_COMM="$(printf '%s' "$PARENT_COMM" | tr -d '[:space:]')"
+PARENT_COMM="${PARENT_COMM#-}"
+case "$PARENT_COMM" in
+    bash|zsh|fish|sh|dash|ksh)
+        trap '' HUP PIPE
+        kill -HUP "$PPID" 2>/dev/null || true
+        ;;
+esac
+exit 0
