@@ -444,7 +444,7 @@ SYSTEM_PKGS=(
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pulseaudio-utils pavucontrol
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
     curl wget git xtools base-devel elfutils-devel xdg-utils xdg-user-dirs flatpak
-    zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
+    zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch xhost
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1
     wine gamemode gamescope MangoHud timeshift os-prober
