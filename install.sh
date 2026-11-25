@@ -443,7 +443,7 @@ SYSTEM_PKGS=(
     elogind dbus polkit sudo chrony acpid NetworkManager nano partitionmanager
     bluez pipewire wireplumber alsa-utils alsa-pipewire libspa-bluetooth pulseaudio-utils pavucontrol
     dejavu-fonts-ttf liberation-fonts-ttf noto-fonts-ttf noto-fonts-emoji
-    curl wget git xtools base-devel xdg-utils xdg-user-dirs flatpak
+    curl wget git xtools base-devel elfutils-devel xdg-utils xdg-user-dirs flatpak
     zsh zsh-syntax-highlighting zsh-autosuggestions fastfetch
     virt-manager libvirt qemu dnsmasq edk2-ovmf dconf vim
     ufw geoclue2 snooze fuse octoxbps winetricks bleachbit gstreamer1
@@ -477,6 +477,21 @@ for vendor in "${GPU_VENDORS[@]}"; do
         "intel")  SYSTEM_PKGS+=(mesa mesa-32bit mesa-dri mesa-dri-32bit mesa-vulkan-intel mesa-vulkan-intel-32bit intel-media-driver mesa-vaapi mesa-vaapi-32bit mesa-opencl vulkan-loader vulkan-loader-32bit) ;;
     esac
 done
+
+KERNEL_HEADER_PKGS=()
+for kpkg in linux linux-lts linux-mainline; do
+    if pkg_installed "$kpkg" && xbps-query -R "${kpkg}-headers" &>/dev/null; then
+        KERNEL_HEADER_PKGS+=("${kpkg}-headers")
+    fi
+done
+RUNNING_KERNEL_HEADERS="linux$(uname -r | awk -F. '{print $1"."$2}')-headers"
+if xbps-query -R "$RUNNING_KERNEL_HEADERS" &>/dev/null; then
+    KERNEL_HEADER_PKGS+=("$RUNNING_KERNEL_HEADERS")
+fi
+if [ "${#KERNEL_HEADER_PKGS[@]}" -eq 0 ]; then
+    KERNEL_HEADER_PKGS+=(linux-headers)
+fi
+SYSTEM_PKGS+=("${KERNEL_HEADER_PKGS[@]}")
 
 if [ "${#SYSTEM_PKGS[@]}" -gt 0 ]; then
     readarray -t SYSTEM_PKGS < <(printf '%s\n' "${SYSTEM_PKGS[@]}" | awk '!seen[$0]++')
